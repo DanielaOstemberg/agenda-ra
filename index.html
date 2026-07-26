@@ -87,12 +87,13 @@
     position: sticky; top: 8px; z-index: 20; box-shadow: var(--shadow);
   }
   .tabs button {
-    flex: 1; border: 0; background: transparent; color: var(--muted);
-    font-family: inherit; font-size: var(--fs-small); font-weight: 600;
-    padding: 9px 6px; border-radius: 8px; cursor: pointer; letter-spacing: .01em;
-    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    flex: 1; min-width: 0; border: 0; background: transparent; color: var(--muted);
+    font-family: inherit; font-size: var(--fs-tiny); font-weight: 700;
+    padding: 9px 3px; border-radius: 8px; cursor: pointer; letter-spacing: 0;
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
     transition: background .15s, color .15s;
   }
+  .tabs button > span:first-child, .tabs button { white-space: nowrap; }
   .tabs button .n {
     font-size: var(--fs-tiny); font-weight: 700; min-width: 18px; height: 18px;
     line-height: 18px; border-radius: 9px; background: var(--border);
@@ -171,6 +172,22 @@
   .coord .info { flex: 1; min-width: 0; }
   .coord .info .nm { font-weight: 600; font-size: var(--fs-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .coord .info .ph { color: var(--muted); font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
+  .coord .acts { display: flex; gap: 2px; flex-shrink: 0; }
+
+  /* Relatório */
+  .rel-summary { display: flex; gap: 10px; flex-wrap: wrap; }
+  .rel-stat { flex: 1; min-width: 90px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; text-align: center; }
+  .rel-stat .num { font-size: 1.5rem; font-weight: 700; color: var(--civic); font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .rel-stat .cap { font-size: var(--fs-tiny); color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-top: 3px; }
+  .rel-day { font-size: var(--fs-small); font-weight: 700; color: var(--faint); text-transform: uppercase; letter-spacing: .05em; margin: 16px 0 8px; }
+  .rel-item { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; margin-bottom: 10px; background: var(--surface); }
+  .rel-item .top { display: flex; align-items: baseline; gap: 8px; justify-content: space-between; }
+  .rel-item .nm { font-weight: 700; font-size: var(--fs-3); }
+  .rel-item .time { font-size: var(--fs-tiny); color: var(--faint); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+  .rel-item .meta { font-size: var(--fs-small); color: var(--muted); margin: 2px 0 8px; }
+  .rel-item .meta .ra-tag { display: inline-block; font-size: var(--fs-tiny); font-weight: 700; color: var(--civic); background: var(--civic-soft); border-radius: 6px; padding: 2px 7px; }
+  .rel-item .evs { font-size: var(--fs-small); white-space: pre-wrap; border-top: 1px dashed var(--border); padding-top: 8px; line-height: 1.5; }
+  .rel-item .del { float: right; }
 
   .empty {
     text-align: center; color: var(--faint); font-size: var(--fs-small);
@@ -251,9 +268,10 @@
 
 <div class="wrap">
   <div class="tabs" role="tablist">
-    <button role="tab" aria-selected="true" data-tab="coord">Coordenadores<span class="n" id="cnt-coord">0</span></button>
+    <button role="tab" aria-selected="true" data-tab="coord">Contatos<span class="n" id="cnt-coord">0</span></button>
     <button role="tab" aria-selected="false" data-tab="agenda">Agenda<span class="n" id="cnt-ag">0</span></button>
     <button role="tab" aria-selected="false" data-tab="enviar">Enviar<span class="n" id="cnt-env">0</span></button>
+    <button role="tab" aria-selected="false" data-tab="relatorio">Relatório<span class="n" id="cnt-rel">0</span></button>
   </div>
 
   <!-- COORDENADORES -->
@@ -282,6 +300,19 @@
       <h2>Coordenadores cadastrados</h2>
       <p class="hint" id="coord-hint">Nenhum ainda.</p>
       <div id="coord-list"></div>
+    </div>
+
+    <div class="card">
+      <h2>Passar a lista para outra pessoa</h2>
+      <p class="hint">Gere um <b>código</b> com os coordenadores e envie para outra pessoa colar aqui — a lista dela é preenchida sem digitar nada.</p>
+      <label class="field">
+        <span class="lbl">Código da lista</span>
+        <textarea id="io-box" placeholder="Toque em &quot;Gerar código&quot; para criar, ou cole aqui um código que você recebeu e toque em &quot;Carregar código&quot;."></textarea>
+      </label>
+      <div class="row">
+        <button class="btn ghost small" id="io-export">📤 Gerar código</button>
+        <button class="btn civic small" id="io-import">📥 Carregar código</button>
+      </div>
     </div>
   </section>
 
@@ -313,6 +344,20 @@
     <div id="send-area"></div>
   </section>
 
+  <!-- RELATÓRIO -->
+  <section class="view" id="view-relatorio">
+    <div class="card">
+      <h2>Relatório de convocações</h2>
+      <p class="hint">Cada vez que você toca em <b>“Enviar no WhatsApp”</b>, fica registrado aqui: quem foi convocado, para qual RA e quais eventos.</p>
+      <div id="rel-summary" class="rel-summary"></div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn ghost small" id="rel-copy">📋 Copiar relatório</button>
+        <button class="btn ghost small" id="rel-clear">🗑️ Limpar tudo</button>
+      </div>
+    </div>
+    <div id="rel-list"></div>
+  </section>
+
   <div class="foot">
     Semi-automático e seguro: nada é enviado sozinho — você revisa e toca para enviar em cada coordenador.<br>
     Dados salvos apenas neste navegador.
@@ -324,7 +369,7 @@
 <script>
 (function(){
   "use strict";
-  var LS = { coord: "agra_coords_v1", tmpl: "agra_tmpl_v1", auth: "agra_auth_v1" };
+  var LS = { coord: "agra_coords_v1", tmpl: "agra_tmpl_v1", auth: "agra_auth_v1", log: "agra_log_v1" };
 
   // 35 RAs do DF + apelidos para detecção (ordem: mais específico primeiro)
   var RAS = [
@@ -398,10 +443,18 @@
   function $(id){ return document.getElementById(id); }
   function esc(s){ return (s||"").replace(/[&<>]/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c]; }); }
 
-  var coords = load(LS.coord, []);   // {id, ra, nome, tel}
-  var events = [];                    // {id, txt, ra, on}
+  // Dados iniciais (versão pré-carregada preenche este array; versão em branco fica vazio)
+  var SEED = [];
+  var _rawCoord = localStorage.getItem(LS.coord);
+  var coords;
+  if (_rawCoord){ try { coords = JSON.parse(_rawCoord) || []; } catch(e){ coords = []; } }
+  else { coords = SEED.map(function(s,i){ return { id: "seed"+i, ra: s.ra, nome: s.nome, tel: s.tel }; }); if (SEED.length) save(LS.coord, coords); }
+  // {id, ra, nome, tel}
+  var events = [];                    // {id, txt, quando, desc, ra, on}
   var tmpl = load(LS.tmpl, DEFAULT_TMPL);
   var authority = load(LS.auth, "");
+  var logs = load(LS.log, []);       // {id, ts, ra, nome, tel, autoridade, itens:[{quando,desc}]}
+  var editingId = null;              // id do coordenador em edição
 
   var toastT;
   function toast(msg){
@@ -446,6 +499,7 @@
       document.querySelectorAll(".view").forEach(function(v){ v.classList.remove("active"); });
       $("view-"+b.dataset.tab).classList.add("active");
       if (b.dataset.tab==="enviar") renderSend();
+      if (b.dataset.tab==="relatorio") renderReport();
       window.scrollTo({top:0, behavior:"smooth"});
     });
   });
@@ -454,6 +508,7 @@
     document.querySelectorAll(".view").forEach(function(v){ v.classList.remove("active"); });
     $("view-"+name).classList.add("active");
     if (name==="enviar") renderSend();
+    if (name==="relatorio") renderReport();
     window.scrollTo({top:0, behavior:"smooth"});
   }
 
@@ -477,10 +532,55 @@
     if (!ra){ toast("Escolha a RA"); return; }
     if (!nome){ toast("Informe o nome"); return; }
     if (digits(tel).length < 10){ toast("Telefone incompleto (DDD + número)"); return; }
-    coords.push({ id: nextId(), ra: ra, nome: nome, tel: tel });
+    if (editingId){
+      var c = coords.filter(function(x){ return x.id===editingId; })[0];
+      if (c){ c.ra = ra; c.nome = nome; c.tel = tel; }
+      editingId = null;
+      $("add-coord").textContent = "＋ Adicionar coordenador";
+      toast("Alterações salvas");
+    } else {
+      coords.push({ id: nextId(), ra: ra, nome: nome, tel: tel });
+      toast("Coordenador adicionado");
+    }
     save(LS.coord, coords);
     $("f-nome").value=""; $("f-tel").value=""; fillRASelect($("f-ra"), "");
-    renderCoords(); toast("Coordenador adicionado");
+    renderCoords();
+  });
+
+  function startEdit(c){
+    editingId = c.id;
+    fillRASelect($("f-ra"), c.ra);
+    $("f-nome").value = c.nome;
+    $("f-tel").value = c.tel;
+    $("add-coord").textContent = "💾 Salvar alterações";
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    toast("Editando " + (c.nome || c.ra));
+  }
+
+  // Exportar / importar lista de coordenadores (para passar a outra pessoa)
+  $("io-export").addEventListener("click", function(){
+    if (!coords.length){ toast("Cadastre coordenadores primeiro"); return; }
+    var code = JSON.stringify(coords.map(function(c){ return { ra: c.ra, nome: c.nome, tel: c.tel }; }));
+    $("io-box").value = code;
+    copyText(code);
+    toast("Código gerado e copiado");
+  });
+  $("io-import").addEventListener("click", function(){
+    var raw = ($("io-box").value || "").trim();
+    if (!raw){ toast("Cole um código primeiro"); return; }
+    var arr;
+    try { arr = JSON.parse(raw); } catch(e){ toast("Código inválido"); return; }
+    if (!Array.isArray(arr)){ toast("Código inválido"); return; }
+    var incoming = arr.filter(function(x){ return x && x.ra && x.tel; }).map(function(x){
+      return { id: nextId(), ra: String(x.ra), nome: String(x.nome||""), tel: String(x.tel) };
+    });
+    if (!incoming.length){ toast("Nenhum coordenador válido no código"); return; }
+    if (coords.length && !confirm("Isto vai SUBSTITUIR sua lista atual por " + incoming.length + " coordenador(es). Continuar?")) return;
+    coords = incoming;
+    save(LS.coord, coords);
+    $("io-box").value = "";
+    renderCoords();
+    toast(incoming.length + " coordenador(es) carregado(s)");
   });
 
   function renderCoords(){
@@ -493,8 +593,13 @@
       row.innerHTML =
         '<span class="ra-tag">'+esc(c.ra)+'</span>'+
         '<div class="info"><div class="nm">'+esc(c.nome)+'</div><div class="ph">'+esc(fmtTel(c.tel))+'</div></div>'+
-        '<button class="icon-btn" title="Remover" aria-label="Remover">🗑️</button>';
-      row.querySelector(".icon-btn").addEventListener("click", function(){
+        '<div class="acts">'+
+          '<button class="icon-btn btn-edit" title="Editar" aria-label="Editar">✏️</button>'+
+          '<button class="icon-btn btn-del" title="Remover" aria-label="Remover">🗑️</button>'+
+        '</div>';
+      row.querySelector(".btn-edit").addEventListener("click", function(){ startEdit(c); });
+      row.querySelector(".btn-del").addEventListener("click", function(){
+        if (!confirm("Remover " + (c.nome || c.ra) + "?")) return;
         coords = coords.filter(function(x){ return x.id!==c.id; });
         save(LS.coord, coords); renderCoords(); updateCounts();
       });
@@ -656,6 +761,12 @@
           a.className="btn primary"; a.textContent="Enviar no WhatsApp";
           a.href = "https://wa.me/"+waNumber(c.tel)+"?text="+encodeURIComponent(msg);
           a.target="_blank"; a.rel="noopener";
+          a.addEventListener("click", (function(coord, region, items, linkEl){
+            return function(){
+              logSend(coord, region, items);
+              linkEl.textContent = "✓ Enviado (reenviar)";
+            };
+          })(c, ra, evs, a));
           var cp = document.createElement("button"); cp.className="btn ghost"; cp.innerHTML="Copiar"; cp.style.flex="0 0 auto";
           cp.addEventListener("click", function(){ copyText(msg); });
           sr.appendChild(a); sr.appendChild(cp);
@@ -668,6 +779,96 @@
   }
   // re-render leve quando autoridade muda e a aba enviar está ativa
   function renderSendSoft(){ if ($("view-enviar").classList.contains("active")) renderSend(); }
+
+  // ---------- Relatório ----------
+  function logSend(coord, ra, itens){
+    logs.push({
+      id: "l" + Date.now() + "-" + Math.floor(Math.random()*1e6),
+      ts: Date.now(),
+      ra: ra,
+      nome: coord.nome || "",
+      tel: coord.tel || "",
+      autoridade: authority || "",
+      itens: (itens || []).map(function(x){ return { quando: x.quando || "", desc: x.desc || "" }; })
+    });
+    save(LS.log, logs);
+    updateCounts();
+    toast("Registrado no relatório");
+  }
+
+  function fmtDate(ts){ try { return new Date(ts).toLocaleDateString("pt-BR"); } catch(e){ return ""; } }
+  function fmtTime(ts){ try { return new Date(ts).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}); } catch(e){ return ""; } }
+
+  function renderReport(){
+    // Resumo
+    var sum = $("rel-summary"); sum.innerHTML="";
+    var pessoas = {}; var ras = {};
+    logs.forEach(function(l){ pessoas[l.tel]=1; ras[l.ra]=1; });
+    var stats = [
+      { num: logs.length, cap: "Convocações" },
+      { num: Object.keys(pessoas).length, cap: "Pessoas" },
+      { num: Object.keys(ras).length, cap: "RAs" }
+    ];
+    stats.forEach(function(s){
+      var d = document.createElement("div"); d.className="rel-stat";
+      d.innerHTML = '<div class="num">'+s.num+'</div><div class="cap">'+s.cap+'</div>';
+      sum.appendChild(d);
+    });
+
+    // Lista por dia (mais recente primeiro)
+    var box = $("rel-list"); box.innerHTML="";
+    if (!logs.length){
+      var em = document.createElement("div"); em.className="empty";
+      em.textContent = "Nenhuma convocação registrada ainda. Ao tocar em “Enviar no WhatsApp”, o registro aparece aqui.";
+      box.appendChild(em); return;
+    }
+    var ordered = logs.slice().sort(function(a,b){ return b.ts - a.ts; });
+    var lastDay = null;
+    ordered.forEach(function(l){
+      var day = fmtDate(l.ts);
+      if (day !== lastDay){
+        var h = document.createElement("div"); h.className="rel-day"; h.textContent = day;
+        box.appendChild(h); lastDay = day;
+      }
+      var it = document.createElement("div"); it.className="rel-item";
+      var evsHtml = (l.itens||[]).map(function(x){
+        var w = x.quando ? "🗓️ " + esc(x.quando) + " — " : "";
+        return "• " + w + esc(x.desc);
+      }).join("\n");
+      it.innerHTML =
+        '<div class="top"><span class="nm">'+esc(l.nome || "(sem nome)")+'</span><span class="time">'+fmtTime(l.ts)+'</span></div>'+
+        '<div class="meta"><span class="ra-tag">'+esc(l.ra)+'</span> · '+esc(fmtTel(l.tel))+(l.autoridade?' · '+esc(l.autoridade):'')+'</div>'+
+        '<div class="evs">'+evsHtml+'</div>'+
+        '<button class="icon-btn del" title="Excluir registro">🗑️</button>';
+      it.querySelector(".del").addEventListener("click", function(){
+        logs = logs.filter(function(x){ return x.id!==l.id; });
+        save(LS.log, logs); renderReport(); updateCounts();
+      });
+      box.appendChild(it);
+    });
+  }
+
+  function reportText(){
+    if (!logs.length) return "Nenhuma convocação registrada.";
+    var ordered = logs.slice().sort(function(a,b){ return a.ts - b.ts; });
+    var out = "RELATÓRIO DE CONVOCAÇÕES\n========================\n\n";
+    ordered.forEach(function(l){
+      out += fmtDate(l.ts) + " " + fmtTime(l.ts) + " | " + (l.nome||"(sem nome)") + " | " + l.ra + " | " + fmtTel(l.tel) + "\n";
+      (l.itens||[]).forEach(function(x){
+        out += "   - " + (x.quando ? x.quando + " — " : "") + x.desc + "\n";
+      });
+      out += "\n";
+    });
+    out += "Total: " + logs.length + " convocação(ões).";
+    return out;
+  }
+
+  $("rel-copy").addEventListener("click", function(){ copyText(reportText()); });
+  $("rel-clear").addEventListener("click", function(){
+    if (!logs.length){ toast("Relatório já está vazio"); return; }
+    if (!confirm("Apagar TODO o relatório de convocações? Isso não pode ser desfeito.")) return;
+    logs = []; save(LS.log, logs); renderReport(); updateCounts(); toast("Relatório limpo");
+  });
 
   function copyText(t){
     if (navigator.clipboard && navigator.clipboard.writeText){
@@ -690,6 +891,7 @@
       return acc + (coords.some(function(c){ return c.ra===ra; }) ? coords.filter(function(c){return c.ra===ra;}).length : 0);
     }, 0);
     $("cnt-env").textContent = sendable;
+    $("cnt-rel").textContent = logs.length;
   }
 
   renderCoords();
