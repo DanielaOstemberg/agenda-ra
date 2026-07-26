@@ -173,6 +173,9 @@
   .coord .info .nm { font-weight: 600; font-size: var(--fs-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .coord .info .ph { color: var(--muted); font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
   .coord .acts { display: flex; gap: 2px; flex-shrink: 0; }
+  .coord-tools { display: flex; gap: 8px; margin-bottom: 12px; }
+  .coord-tools #coord-filter { flex: 1; min-width: 0; }
+  .coord-tools #coord-sort { flex: 0 0 auto; width: auto; max-width: 42%; }
 
   /* Relatório */
   .rel-summary { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -246,6 +249,8 @@
     width: 20px; height: 20px; margin: 0; flex-shrink: 0; border-radius: 0;
   }
   .sel-line .who { margin: 0 !important; }
+  .dup-badge { flex-shrink: 0; font-size: var(--fs-tiny); font-weight: 700; color: var(--warn); background: var(--warn-soft); border: 1px solid var(--warn); border-radius: 7px; padding: 2px 7px; white-space: nowrap; }
+  .dup-badge::before { content: "⚠️ "; }
   .group.unsel { opacity: .5; }
 
   .queuebar {
@@ -339,6 +344,13 @@
     <div class="card">
       <h2>Coordenadores cadastrados</h2>
       <p class="hint" id="coord-hint">Nenhum ainda.</p>
+      <div class="coord-tools" id="coord-tools" style="display:none">
+        <input id="coord-filter" type="search" inputmode="search" autocomplete="off" placeholder="🔍 Filtrar por nome, RA ou telefone">
+        <select id="coord-sort" aria-label="Ordenar">
+          <option value="nome">A–Z (nome)</option>
+          <option value="ra">Por RA</option>
+        </select>
+      </div>
       <div id="coord-list"></div>
     </div>
 
@@ -430,7 +442,8 @@
 <script>
 (function(){
   "use strict";
-  var LS = { coord: "agra_coords_v1", tmpl: "agra_tmpl_v1", auth: "agra_auth_v1", log: "agra_log_v1" };
+  var LS = { coord: "agra_coords_v1", tmpl: "agra_tmpl_v1", auth: "agra_auth_v1", log: "agra_log_v1",
+             events: "agra_events_v1", sent: "agra_sent_v1", sel: "agra_sendsel_v1", texto: "agra_texto_v1" };
 
   // 35 RAs do DF + apelidos para detecção (ordem: mais específico primeiro)
   var RAS = [
@@ -554,6 +567,17 @@
     var m = (block||"").match(/endere[çc]o:\s*([^•]+)/i);
     return m ? m[1].replace(/\s+/g," ").trim().replace(/[.,;|]+$/,"") : "";
   }
+  // "Melhor horário para a chegada [da Governadora]: 9h30" -> "9h30"
+  function extractChegada(block){
+    var m = (block||"").match(/melhor\s+hor[áa]rio[^:]*chegada[^:]*:\s*([0-9]{1,2}\s*(?:h\s*[0-9]{0,2}|:\s*[0-9]{2}))/i);
+    return m ? m[1].replace(/\s+/g,"") : "";
+  }
+  // Normaliza hora para comparação: "09h30"/"9h30"/"9:30" -> "9:30"
+  function normHora(t){
+    var m = (t||"").match(/(\d{1,2})\s*[h:]\s*(\d{2})?/);
+    if (!m) return "";
+    return (+m[1]) + ":" + ("0" + (m[2]||"0")).slice(-2);
+  }
   function load(k, def){ try { var v = localStorage.getItem(k); return v==null?def:JSON.parse(v); } catch(e){ return def; } }
   function save(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} }
   function $(id){ return document.getElementById(id); }
@@ -566,13 +590,18 @@
   if (_rawCoord){ try { coords = JSON.parse(_rawCoord) || []; } catch(e){ coords = []; } }
   else { coords = SEED.map(function(s,i){ return { id: "seed"+i, ra: s.ra, nome: s.nome, tel: s.tel }; }); if (SEED.length) save(LS.coord, coords); }
   // {id, ra, nome, tel}
-  var events = [];                    // {id, txt, quando, desc, ra, on}
+  var events = load(LS.events, []);  // {id, txt, quando, desc, end, geo, chegada, ra, on} — sessão persistida
   var tmpl = load(LS.tmpl, DEFAULT_TMPL);
   var authority = load(LS.auth, "");
   var logs = load(LS.log, []);       // {id, ts, ra, nome, tel, autoridade, itens:[{quando,desc}]}
   var editingId = null;              // id do coordenador em edição
-  var sendSel = {};                  // seleção da fila de envio: chave "ra||idCoord" -> false quando desmarcado
+  var coordFilter = "", coordSort = "nome";   // filtro e ordenação da lista de contatos
+  var sendSel = load(LS.sel, {});    // seleção da fila de envio: chave "ra||idCoord" -> false quando desmarcado
+  var sent = load(LS.sent, {});      // já enviados nesta agenda: chave "ra||idCoord" -> true (some da lista)
   var queue = [], qIndex = 0;        // fila de envio em sequência
+  function saveSession(){ save(LS.events, events); }
+  function saveSent(){ save(LS.sent, sent); }
+  function saveSel(){ save(LS.sel, sendSel); }
 
   var toastT;
   function toast(msg){
@@ -635,6 +664,14 @@
     if (name==="relatorio") renderReport();
     updateQueueBar();
     window.scrollTo({top:0, behavior:"smooth"});
+  }
+  // Vai para Contatos com a RA pré-selecionada (atalho da aba Enviar)
+  function prefillNewCoord(ra){
+    goTab("coord");
+    editingId = null; $("add-coord").textContent = "＋ Adicionar coordenador";
+    fillRASelect($("f-ra"), ra); $("f-nome").value = ""; $("f-tel").value = "";
+    setTimeout(function(){ try { $("f-nome").focus(); } catch(e){} }, 80);
+    toast("Cadastre o coordenador de " + ra);
   }
 
   // ---------- Selects de RA ----------
@@ -708,12 +745,36 @@
     toast(incoming.length + " coordenador(es) carregado(s)");
   });
 
+  $("coord-filter").addEventListener("input", function(){ coordFilter = this.value; renderCoords(); });
+  $("coord-sort").addEventListener("change", function(){ coordSort = this.value; renderCoords(); });
+
   function renderCoords(){
     var box = $("coord-list"); box.innerHTML="";
-    if (!coords.length){ $("coord-hint").textContent = "Nenhum ainda."; }
-    else { $("coord-hint").textContent = coords.length + " cadastrado(s)."; }
-    var sorted = coords.slice().sort(function(a,b){ return a.ra.localeCompare(b.ra,"pt"); });
-    sorted.forEach(function(c){
+    var tools = $("coord-tools"); if (tools) tools.style.display = coords.length ? "flex" : "none";
+
+    // ordena (por nome A–Z ou por RA), com desempate
+    var sorted = coords.slice().sort(function(a,b){
+      if (coordSort === "ra"){
+        var r = a.ra.localeCompare(b.ra,"pt"); return r || (a.nome||"").localeCompare(b.nome||"","pt");
+      }
+      var n = (a.nome||"").localeCompare(b.nome||"","pt"); return n || a.ra.localeCompare(b.ra,"pt");
+    });
+    // filtra por nome, RA ou telefone
+    var term = norm(coordFilter).trim(), dterm = digits(coordFilter);
+    var list = (term || dterm) ? sorted.filter(function(c){
+      return norm(c.nome).indexOf(term) >= 0 || norm(c.ra).indexOf(term) >= 0 || (dterm && digits(c.tel).indexOf(dterm) >= 0);
+    }) : sorted;
+
+    if (!coords.length) $("coord-hint").textContent = "Nenhum ainda.";
+    else if (list.length !== coords.length) $("coord-hint").textContent = list.length + " de " + coords.length + " (filtro)";
+    else $("coord-hint").textContent = coords.length + " cadastrado(s).";
+
+    if (coords.length && !list.length){
+      var em = document.createElement("div"); em.className="empty";
+      em.textContent = "Nenhum contato encontrado.";
+      box.appendChild(em);
+    }
+    list.forEach(function(c){
       var row = document.createElement("div"); row.className="coord";
       row.innerHTML =
         '<span class="ra-tag">'+esc(c.ra)+'</span>'+
@@ -736,6 +797,8 @@
   // ---------- Agenda / parsing ----------
   $("f-autoridade").value = authority;
   $("f-autoridade").addEventListener("input", function(){ authority = this.value; save(LS.auth, authority); renderSendSoft(); });
+  $("f-texto").value = load(LS.texto, "");
+  $("f-texto").addEventListener("input", function(){ save(LS.texto, this.value); });
 
   function splitEvents(text){
     var t = (text||"").replace(/\r/g," ").trim();
@@ -759,11 +822,13 @@
     var blocks = splitEvents(text);
     if (!blocks.length){ toast("Cole o texto da agenda primeiro"); return; }
     var gdate = detectDate(text);   // data do cabeçalho, aplicada a todos os eventos sem data própria
+    sent = {}; sendSel = {}; saveSent(); saveSel();   // nova agenda: zera "já enviados" e a seleção
     events = blocks.map(function(b,i){
       var q = extractQuando(b);
       var when = [q.date || gdate, q.time].filter(Boolean).join(" · ");
-      return { id: "e"+i+"-"+Math.floor(performance.now()), txt: b, quando: when, desc: q.desc, end: extractEndereco(b), geo: extractGeo(b), ra: detectRA(b), on: true };
+      return { id: "e"+i+"-"+Math.floor(performance.now()), txt: b, quando: when, desc: q.desc, end: extractEndereco(b), geo: extractGeo(b), chegada: extractChegada(b), ra: detectRA(b), on: true };
     });
+    saveSession();
     renderEvents();
     $("events-card").style.display="block";
     var found = events.filter(function(e){ return e.ra; }).length;
@@ -783,6 +848,9 @@
       var wLbl = document.createElement("span"); wLbl.className="mini-lbl"; wLbl.textContent="Data / horário";
       var wInp = document.createElement("input"); wInp.className="ev-quando"; wInp.type="text";
       wInp.value = e.quando || ""; wInp.placeholder="Ex.: 25/07 · 09h";
+      var cLbl = document.createElement("span"); cLbl.className="mini-lbl"; cLbl.textContent="Melhor horário para chegar";
+      var cInp = document.createElement("input"); cInp.className="ev-chegada"; cInp.type="text";
+      cInp.value = e.chegada || ""; cInp.placeholder="Ex.: 9h30 (opcional)";
       var dLbl = document.createElement("span"); dLbl.className="mini-lbl"; dLbl.textContent="O que é o evento (detalhado)";
       var dInp = document.createElement("textarea"); dInp.className="ev-desc"; dInp.rows=2;
       dInp.value = e.desc || ""; dInp.placeholder="Ex.: Inauguração da praça central, com presença de lideranças locais";
@@ -793,10 +861,11 @@
       var gInp = document.createElement("input"); gInp.className="ev-geo"; gInp.type="url"; gInp.inputMode="url";
       gInp.value = e.geo || ""; gInp.placeholder="Cole o link do mapa (opcional)";
       var wWrap = document.createElement("div"); wWrap.appendChild(wLbl); wWrap.appendChild(wInp);
+      var cWrap = document.createElement("div"); cWrap.appendChild(cLbl); cWrap.appendChild(cInp);
       var dWrap = document.createElement("div"); dWrap.appendChild(dLbl); dWrap.appendChild(dInp);
       var eWrap = document.createElement("div"); eWrap.appendChild(eLbl); eWrap.appendChild(eInp);
       var gWrap = document.createElement("div"); gWrap.appendChild(gLbl); gWrap.appendChild(gInp);
-      fields.appendChild(wWrap); fields.appendChild(dWrap); fields.appendChild(eWrap); fields.appendChild(gWrap);
+      fields.appendChild(wWrap); fields.appendChild(cWrap); fields.appendChild(dWrap); fields.appendChild(eWrap); fields.appendChild(gWrap);
       div.appendChild(fields);
 
       var sel = document.createElement("select");
@@ -808,17 +877,18 @@
       ctrls.appendChild(sel); ctrls.appendChild(lab);
       div.appendChild(ctrls); box.appendChild(div);
 
-      wInp.addEventListener("input", function(){ e.quando = wInp.value; });
-      dInp.addEventListener("input", function(){ e.desc = dInp.value; });
-      eInp.addEventListener("input", function(){ e.end = eInp.value.trim(); });
-      gInp.addEventListener("input", function(){ e.geo = gInp.value.trim(); });
+      wInp.addEventListener("input", function(){ e.quando = wInp.value; saveSession(); });
+      cInp.addEventListener("input", function(){ e.chegada = cInp.value.trim(); saveSession(); });
+      dInp.addEventListener("input", function(){ e.desc = dInp.value; saveSession(); });
+      eInp.addEventListener("input", function(){ e.end = eInp.value.trim(); saveSession(); });
+      gInp.addEventListener("input", function(){ e.geo = gInp.value.trim(); saveSession(); });
       sel.addEventListener("change", function(){
         e.ra = sel.value;
         div.classList.toggle("noRA", !e.ra);
-        updateCounts();
+        saveSession(); updateCounts();
       });
       chk.addEventListener("change", function(){
-        e.on = chk.checked; div.classList.toggle("off", !e.on); updateCounts();
+        e.on = chk.checked; div.classList.toggle("off", !e.on); saveSession(); updateCounts();
       });
     });
   }
@@ -828,7 +898,7 @@
     var byRA = {};
     events.forEach(function(e){
       if (!e.on || !e.ra) return;
-      (byRA[e.ra] = byRA[e.ra] || []).push({ quando: e.quando || "", desc: (e.desc || e.txt || "").replace(/\n+/g," ").trim(), end: (e.end || "").trim(), geo: (e.geo || "").trim() });
+      (byRA[e.ra] = byRA[e.ra] || []).push({ quando: e.quando || "", desc: (e.desc || e.txt || "").replace(/\n+/g," ").trim(), chegada: (e.chegada || "").trim(), end: (e.end || "").trim(), geo: (e.geo || "").trim() });
     });
     return byRA;
   }
@@ -836,9 +906,11 @@
   function buildMessage(nome, ra, evs){
     var bullets = evs.map(function(x){
       var when = x.quando ? "🗓️ " + x.quando + "\n   " : "";
+      // mostra a chegada só quando informada e diferente do horário do slot
+      var chega = (x.chegada && normHora(x.chegada) && normHora(x.chegada) !== normHora(x.quando)) ? "\n   🕒 Chegar às " + x.chegada : "";
       var end = x.end ? "\n   📍 " + x.end : "";
       var geo = x.geo ? "\n   🗺️ " + x.geo : "";
-      return "• " + when + x.desc + end + geo;
+      return "• " + when + x.desc + chega + end + geo;
     }).join("\n\n");
     return tmpl
       .replace(/{nome}/g, nome || "coordenador(a)")
@@ -872,17 +944,40 @@
 
     // aviso de RAs sem coordenador
     var missing = ras.filter(function(ra){ return !coords.some(function(c){ return c.ra===ra; }); });
+
+    // Resumo + progresso
+    var totalEventos = ras.reduce(function(s,ra){ return s + byRA[ra].length; }, 0);
+    var allRecip = [];
+    ras.forEach(function(ra){ coords.filter(function(c){ return c.ra===ra; }).forEach(function(c){ allRecip.push(ra+"||"+c.id); }); });
+    var enviadosN = allRecip.filter(function(k){ return sent[k]; }).length;
+    var sumRow = document.createElement("div"); sumRow.className="rel-summary"; sumRow.style.marginBottom="10px";
+    [[totalEventos,"Eventos"],[ras.length,"RAs"],[allRecip.length,"A notificar"],[missing.length,"Sem coord."]].forEach(function(s){
+      var d = document.createElement("div"); d.className="rel-stat";
+      d.innerHTML = '<div class="num">'+s[0]+'</div><div class="cap">'+s[1]+'</div>';
+      sumRow.appendChild(d);
+    });
+    area.appendChild(sumRow);
+    if (allRecip.length){
+      var pg = document.createElement("div"); pg.className="hint"; pg.style.cssText="text-align:center;margin-bottom:12px;font-weight:600";
+      pg.textContent = "✅ Enviados: " + enviadosN + " de " + allRecip.length;
+      area.appendChild(pg);
+    }
     if (missing.length){
       var b = document.createElement("div"); b.className="banner";
       b.innerHTML = '<span>⚠️</span><span>Sem coordenador cadastrado para: <b>'+esc(missing.join(", "))+'</b>. Cadastre na aba Coordenadores para gerar o botão de envio.</span>';
       area.appendChild(b);
     }
 
+    var sentList = [];   // {ra, c} já enviados nesta agenda
     ras.forEach(function(ra){
       var evs = byRA[ra];
       var those = coords.filter(function(c){ return c.ra===ra; });
-      var g = document.createElement("div"); g.className="card group";
+      // separa quem já foi enviado (sai da lista ativa)
+      those.forEach(function(c){ if (sent[ra+"||"+c.id]) sentList.push({ ra: ra, c: c }); });
+      var active = those.filter(function(c){ return !sent[ra+"||"+c.id]; });
+      if (those.length && !active.length) return;   // todos dessa RA já enviados
 
+      var g = document.createElement("div"); g.className="card group";
       var head = document.createElement("div"); head.className="ghead";
       head.innerHTML = '<span class="ra">📍 '+esc(ra)+'</span><span class="who">'+evs.length+' evento(s)</span>';
       g.appendChild(head);
@@ -891,11 +986,15 @@
         var msg = buildMessage("", ra, evs);
         var prev = document.createElement("div"); prev.className="msg-prev"; prev.textContent=msg;
         g.appendChild(prev);
+        var row0 = document.createElement("div"); row0.className="send-row";
         var cp = document.createElement("button"); cp.className="btn ghost small"; cp.textContent="Copiar mensagem";
         cp.addEventListener("click", function(){ copyText(msg); });
-        g.appendChild(cp);
+        var addc = document.createElement("button"); addc.className="btn civic small"; addc.textContent="＋ Cadastrar coordenador";
+        addc.addEventListener("click", (function(region){ return function(){ prefillNewCoord(region); }; })(ra));
+        row0.appendChild(cp); row0.appendChild(addc);
+        g.appendChild(row0);
       } else {
-        those.forEach(function(c){
+        active.forEach(function(c){
           var msg = buildMessage(c.nome, ra, evs);
           var key = ra + "||" + c.id;
           if (sendSel[key] === undefined) sendSel[key] = true;   // vem selecionado por padrão
@@ -905,10 +1004,12 @@
           var who = document.createElement("span"); who.className="who";
           who.innerHTML = "Para <b>"+esc(c.nome)+"</b> · "+esc(fmtTel(c.tel));
           selLine.appendChild(selChk); selLine.appendChild(who);
+          var dup = alreadySentToday(c);
+          if (dup){ var db = document.createElement("span"); db.className="dup-badge"; db.textContent="já convocado hoje "+fmtTime(dup.ts); selLine.appendChild(db); }
           g.appendChild(selLine);
           selChk.addEventListener("change", function(){
-            sendSel[key] = selChk.checked;
-            g.classList.toggle("unsel", !selChk.checked && !those.some(function(o){ return sendSel[ra+"||"+o.id] !== false; }));
+            sendSel[key] = selChk.checked; saveSel();
+            g.classList.toggle("unsel", !selChk.checked && !active.some(function(o){ return sendSel[ra+"||"+o.id] !== false; }));
             updateQueueBar();
           });
 
@@ -920,12 +1021,15 @@
           a.className="btn primary"; a.textContent="Enviar no WhatsApp";
           a.href = "https://wa.me/"+waNumber(c.tel)+"?text="+encodeURIComponent(msg);
           a.target="_blank"; a.rel="noopener";
-          a.addEventListener("click", (function(coord, region, items, linkEl){
-            return function(){
-              logSend(coord, region, items);
-              linkEl.textContent = "✓ Enviado (reenviar)";
+          a.addEventListener("click", (function(coord, region, items){
+            return function(ev){
+              var d = alreadySentToday(coord);
+              if (d && !confirm("Você já convocou " + (coord.nome||"esse contato") + " hoje às " + fmtTime(d.ts) + ".\nEnviar de novo?")){ ev.preventDefault(); return; }
+              logSend(coord, region, items, true);
+              sent[region+"||"+coord.id] = true; saveSent();   // marca enviado -> some ao voltar/renderizar
+              setTimeout(function(){ renderSendSoft(); }, 400);  // deixa o WhatsApp abrir antes de re-renderizar
             };
-          })(c, ra, evs, a));
+          })(c, ra, evs));
           var cp = document.createElement("button"); cp.className="btn ghost"; cp.innerHTML="Copiar"; cp.style.flex="0 0 auto";
           cp.addEventListener("click", function(){ copyText(msg); });
           sr.appendChild(a); sr.appendChild(cp);
@@ -934,6 +1038,25 @@
       }
       area.appendChild(g);
     });
+
+    // Seção "Já enviados" (recolhível, com desfazer)
+    if (sentList.length){
+      var det = document.createElement("details"); det.className="tmpl";
+      det.innerHTML = '<summary>✓ Já enviados ('+sentList.length+')</summary>';
+      var card = document.createElement("div"); card.className="card";
+      sentList.forEach(function(it){
+        var row = document.createElement("div"); row.className="coord";
+        row.innerHTML = '<span class="ra-tag">'+esc(it.ra)+'</span>'+
+          '<div class="info"><div class="nm">'+esc(it.c.nome)+'</div><div class="ph">'+esc(fmtTel(it.c.tel))+'</div></div>';
+        var undo = document.createElement("button"); undo.className="btn ghost tiny"; undo.textContent="↩︎ Desfazer";
+        undo.addEventListener("click", function(){ delete sent[it.ra+"||"+it.c.id]; saveSent(); renderSend(); });
+        row.appendChild(undo);
+        card.appendChild(row);
+      });
+      det.appendChild(card);
+      area.appendChild(det);
+    }
+
     updateCounts();
     updateQueueBar();
   }
@@ -949,6 +1072,7 @@
       var evs = byRA[ra];
       coords.filter(function(c){ return c.ra===ra; }).forEach(function(c){
         if (sendSel[ra+"||"+c.id] === false) return;
+        if (sent[ra+"||"+c.id]) return;                 // já enviado -> fora da fila
         out.push({ coord: c, ra: ra, evs: evs, msg: buildMessage(c.nome, ra, evs) });
       });
     });
@@ -995,18 +1119,25 @@
     $("q-skip").style.display = "none"; $("q-next").style.display = "none";
     $("q-close").textContent = "Concluir";
   }
-  function closeQueue(){ $("qoverlay").classList.remove("show"); updateQueueBar(); }
+  function closeQueue(){ $("qoverlay").classList.remove("show"); renderSendSoft(); updateQueueBar(); }
 
   $("q-start").addEventListener("click", startQueue);
   $("q-open").addEventListener("click", function(){
     var it = queue[qIndex]; if (!it) return;
+    var d = alreadySentToday(it.coord);
+    if (d && !confirm("Você já convocou " + (it.coord.nome||"esse contato") + " hoje às " + fmtTime(d.ts) + ".\nEnviar de novo?")) return;
     window.open("https://wa.me/" + waNumber(it.coord.tel) + "?text=" + encodeURIComponent(it.msg), "_blank");
     logSend(it.coord, it.ra, it.evs, true);            // registra sem toast (silencioso)
+    sent[it.ra + "||" + it.coord.id] = true; saveSent();  // marca enviado -> some da lista ao fechar a fila
     this.textContent = "✓ Aberto — toque em “Próximo →”";
   });
   $("q-next").addEventListener("click", function(){ qIndex++; renderQStep(); });
   $("q-skip").addEventListener("click", function(){ qIndex++; renderQStep(); });
   $("q-close").addEventListener("click", closeQueue);
+
+  // Ao voltar para o app (ex.: depois de enviar no WhatsApp), atualiza a lista: os enviados somem.
+  document.addEventListener("visibilitychange", function(){ if (!document.hidden) renderSendSoft(); });
+  window.addEventListener("focus", function(){ renderSendSoft(); });
 
   // ---------- Relatório ----------
   function logSend(coord, ra, itens, silent){
@@ -1026,6 +1157,12 @@
 
   function fmtDate(ts){ try { return new Date(ts).toLocaleDateString("pt-BR"); } catch(e){ return ""; } }
   function fmtTime(ts){ try { return new Date(ts).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}); } catch(e){ return ""; } }
+  // Se já houve convocação para este telefone HOJE, devolve o registro mais recente (senão null)
+  function alreadySentToday(coord){
+    var today = fmtDate(Date.now()), dtel = digits(coord.tel), hit = null;
+    logs.forEach(function(l){ if (digits(l.tel)===dtel && fmtDate(l.ts)===today && (!hit || l.ts>hit.ts)) hit = l; });
+    return hit;
+  }
 
   function renderReport(){
     // Resumo
@@ -1123,6 +1260,11 @@
   }
 
   renderCoords();
+  // Restaura a agenda separada da sessão anterior (se houver)
+  if (events && events.length){
+    renderEvents();
+    $("events-card").style.display = "block";
+  }
   updateCounts();
 })();
 </script>
