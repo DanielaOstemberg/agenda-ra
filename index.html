@@ -214,7 +214,11 @@
     font-size: var(--fs-small); font-weight: 600; color: var(--muted); cursor: pointer;
     user-select: none; -webkit-user-select: none;
   }
-  .toggle input { width: auto; }
+  .toggle input[type="checkbox"] {
+    -webkit-appearance: auto; appearance: auto;
+    accent-color: var(--accent);
+    width: 20px; height: 20px; margin: 0; flex-shrink: 0; border-radius: 0;
+  }
 
   /* Send groups */
   .group { margin-bottom: 14px; }
@@ -230,9 +234,45 @@
     padding: 11px 12px; font-size: var(--fs-small); white-space: pre-wrap;
     max-height: 170px; overflow: auto; margin-bottom: 10px; line-height: 1.55;
   }
-  .send-row { display: flex; gap: 8px; }
-  .send-row .btn { flex: 1; }
-  .send-row .btn.ghost { flex: 0 0 auto; }
+  .send-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .send-row .btn { flex: 1 1 0; width: auto; min-width: 0; }
+  .send-row .btn.ghost { flex: 0 0 auto; width: auto; }
+
+  /* Seleção + fila de envio */
+  #view-enviar { padding-bottom: 76px; }
+  .sel-line { display: flex; align-items: center; gap: 9px; margin-bottom: 8px; cursor: pointer; }
+  .sel-line input[type="checkbox"], .toggle input[type="checkbox"] {
+    -webkit-appearance: auto; appearance: auto; accent-color: var(--accent);
+    width: 20px; height: 20px; margin: 0; flex-shrink: 0; border-radius: 0;
+  }
+  .sel-line .who { margin: 0 !important; }
+  .group.unsel { opacity: .5; }
+
+  .queuebar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: none;
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+    background: var(--surface); border-top: 1px solid var(--border-strong);
+    box-shadow: 0 -4px 16px rgba(23,32,28,.10);
+  }
+  .queuebar.show { display: block; }
+  .queuebar .inner { max-width: 640px; margin: 0 auto; }
+
+  .qoverlay { position: fixed; inset: 0; z-index: 60; display: none; background: rgba(0,0,0,.5); }
+  .qoverlay.show { display: flex; align-items: flex-end; }
+  .qsheet {
+    background: var(--surface); width: 100%; max-width: 640px; margin: 0 auto;
+    border-radius: 18px 18px 0 0; box-shadow: var(--shadow);
+    padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
+    animation: slideup .2s ease;
+  }
+  @keyframes slideup { from { transform: translateY(24px); opacity: .6; } to { transform: none; opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .qsheet { animation: none; } }
+  .qsheet .qprog { font-size: var(--fs-tiny); font-weight: 700; color: var(--faint); text-transform: uppercase; letter-spacing: .05em; text-align: center; margin-bottom: 4px; }
+  .qsheet .qname { font-size: var(--fs-2); font-weight: 700; text-align: center; }
+  .qsheet .qra { text-align: center; color: var(--civic); font-weight: 600; font-size: var(--fs-small); margin: 2px 0 12px; }
+  .qsheet .qmsg { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 11px 12px; font-size: var(--fs-small); white-space: pre-wrap; max-height: 40vh; overflow: auto; margin-bottom: 14px; line-height: 1.5; }
+  .qsheet .qrow { display: flex; gap: 8px; margin-top: 8px; }
+  .qsheet .qrow .btn { flex: 1; width: auto; min-width: 0; }
 
   .banner {
     display: flex; gap: 10px; align-items: flex-start; padding: 11px 13px;
@@ -364,6 +404,27 @@
   </div>
 </div>
 
+<!-- Barra de envio em lote (aba Enviar) -->
+<div class="queuebar" id="queuebar">
+  <div class="inner"><button class="btn primary" id="q-start">📲 Enviar selecionados (0)</button></div>
+</div>
+
+<!-- Fila de envio: uma pessoa por vez -->
+<div class="qoverlay" id="qoverlay">
+  <div class="qsheet">
+    <div class="qprog" id="q-prog"></div>
+    <div class="qname" id="q-name"></div>
+    <div class="qra" id="q-ra"></div>
+    <div class="qmsg" id="q-msg"></div>
+    <button class="btn primary" id="q-open">📲 Abrir no WhatsApp</button>
+    <div class="qrow">
+      <button class="btn ghost" id="q-skip">Pular</button>
+      <button class="btn civic" id="q-next">Próximo →</button>
+    </div>
+    <button class="btn ghost small" id="q-close" style="width:100%;margin-top:12px">Fechar fila</button>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -421,13 +482,37 @@
   function norm(s){
     return (s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"");
   }
+  // Palavras que indicam ENDEREÇO — o "/" logo depois (ex.: "quadra 9/6", "QNM 9/6")
+  // NÃO é data. Testado sobre o texto normalizado (sem acento, minúsculo).
+  var ADDR_HINT = /(quadra|conjunto|conj|qnm|qnp|qng|qnn|qnl|qms|qms|\bqn\b|\bqi\b|\bqs\b|\bqe\b|\bql\b|\bqd\b|\bqr\b|\bq\b|cnb|cln|sqn|sqs|shcgn|shis|smpw|lote|bloco|\bbl\b|modulo|setor|chacara|\brua\b|avenida|\bav\b|casa|apto|apartamento|\bn[º°o]?\b)\s*[\wº°.]*\s*$/;
+
   // Extrai data/horário de um bloco e devolve a descrição completa (sem perder detalhes)
   function extractQuando(block){
     var s = (block||"").replace(/\s+/g," ").trim();
-    var date = (s.match(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/) || [""])[0];
+    var low = norm(s);
+
+    // ---- DATA ----
+    var date = "";
+    // dd/mm[/aaaa] — ignora padrões de endereço (ex.: "quadra 9/6") e datas implausíveis
+    var reDMY = /\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/g, m;
+    while ((m = reDMY.exec(s))){
+      var dd = +m[1], mm = +m[2];
+      if (dd < 1 || dd > 31 || mm < 1 || mm > 12) continue;      // não é data plausível
+      if (ADDR_HINT.test(low.slice(Math.max(0, m.index - 16), m.index))) continue; // "/" de endereço
+      date = m[0];
+      break;                                                     // 1ª data válida (geralmente no título)
+    }
+    // data por extenso: "9 de junho [de 2026]"
+    if (!date){
+      var me = s.match(/\b\d{1,2}\s+de\s+(?:janeiro|fevereiro|mar[çc]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)(?:\s+de\s+\d{2,4})?\b/i);
+      if (me) date = me[0];
+    }
+
+    // ---- HORA ----
     var time = (s.match(/\b\d{1,2}:\d{2}\b/) || [""])[0]
             || (s.match(/\b\d{1,2}\s*h(?:\s*\d{2})?\b/i) || [""])[0]
             || (s.match(/\b\d{1,2}\s*horas?\b/i) || [""])[0];
+
     var quando = [date, time].filter(Boolean).join(" · ");
     var desc = s;
     if (date) desc = desc.replace(date, " ");
@@ -455,6 +540,8 @@
   var authority = load(LS.auth, "");
   var logs = load(LS.log, []);       // {id, ts, ra, nome, tel, autoridade, itens:[{quando,desc}]}
   var editingId = null;              // id do coordenador em edição
+  var sendSel = {};                  // seleção da fila de envio: chave "ra||idCoord" -> false quando desmarcado
+  var queue = [], qIndex = 0;        // fila de envio em sequência
 
   var toastT;
   function toast(msg){
@@ -500,6 +587,7 @@
       $("view-"+b.dataset.tab).classList.add("active");
       if (b.dataset.tab==="enviar") renderSend();
       if (b.dataset.tab==="relatorio") renderReport();
+      updateQueueBar();
       window.scrollTo({top:0, behavior:"smooth"});
     });
   });
@@ -509,6 +597,7 @@
     $("view-"+name).classList.add("active");
     if (name==="enviar") renderSend();
     if (name==="relatorio") renderReport();
+    updateQueueBar();
     window.scrollTo({top:0, behavior:"smooth"});
   }
 
@@ -750,9 +839,21 @@
       } else {
         those.forEach(function(c){
           var msg = buildMessage(c.nome, ra, evs);
-          var who = document.createElement("div"); who.className="who"; who.style.marginBottom="6px";
+          var key = ra + "||" + c.id;
+          if (sendSel[key] === undefined) sendSel[key] = true;   // vem selecionado por padrão
+
+          var selLine = document.createElement("label"); selLine.className="sel-line";
+          var selChk = document.createElement("input"); selChk.type="checkbox"; selChk.checked = sendSel[key] !== false;
+          var who = document.createElement("span"); who.className="who";
           who.innerHTML = "Para <b>"+esc(c.nome)+"</b> · "+esc(fmtTel(c.tel));
-          g.appendChild(who);
+          selLine.appendChild(selChk); selLine.appendChild(who);
+          g.appendChild(selLine);
+          selChk.addEventListener("change", function(){
+            sendSel[key] = selChk.checked;
+            g.classList.toggle("unsel", !selChk.checked && !those.some(function(o){ return sendSel[ra+"||"+o.id] !== false; }));
+            updateQueueBar();
+          });
+
           var prev = document.createElement("div"); prev.className="msg-prev"; prev.textContent=msg;
           g.appendChild(prev);
 
@@ -776,12 +877,81 @@
       area.appendChild(g);
     });
     updateCounts();
+    updateQueueBar();
   }
   // re-render leve quando autoridade muda e a aba enviar está ativa
   function renderSendSoft(){ if ($("view-enviar").classList.contains("active")) renderSend(); }
 
+  // ---------- Fila de envio (selecionar + enviar em sequência) ----------
+  // Coleta as mensagens selecionadas, na mesma ordem exibida na aba Enviar
+  function collectSelected(){
+    var out = [];
+    var byRA = groupForSend();
+    Object.keys(byRA).sort(function(a,b){ return a.localeCompare(b,"pt"); }).forEach(function(ra){
+      var evs = byRA[ra];
+      coords.filter(function(c){ return c.ra===ra; }).forEach(function(c){
+        if (sendSel[ra+"||"+c.id] === false) return;
+        out.push({ coord: c, ra: ra, evs: evs, msg: buildMessage(c.nome, ra, evs) });
+      });
+    });
+    return out;
+  }
+  function selectedCount(){ return collectSelected().length; }
+
+  function updateQueueBar(){
+    var bar = $("queuebar"); if (!bar) return;
+    var onEnviar = $("view-enviar").classList.contains("active");
+    var overlayOpen = $("qoverlay").classList.contains("show");
+    var n = selectedCount();
+    $("q-start").textContent = "📲 Enviar selecionados (" + n + ")";
+    $("q-start").disabled = n === 0;
+    bar.classList.toggle("show", onEnviar && n > 0 && !overlayOpen);
+  }
+
+  function startQueue(){
+    queue = collectSelected();
+    if (!queue.length){ toast("Selecione ao menos uma mensagem"); return; }
+    qIndex = 0;
+    $("qoverlay").classList.add("show");
+    renderQStep();
+    updateQueueBar();
+  }
+  function renderQStep(){
+    if (qIndex >= queue.length){ renderQDone(); return; }
+    var it = queue[qIndex];
+    $("q-prog").textContent = "Pessoa " + (qIndex+1) + " de " + queue.length;
+    $("q-name").textContent = it.coord.nome || "(sem nome)";
+    $("q-ra").textContent = "📍 " + it.ra + " · " + fmtTel(it.coord.tel);
+    $("q-msg").textContent = it.msg;
+    var ob = $("q-open"); ob.textContent = "📲 Abrir no WhatsApp"; ob.style.display = "";
+    $("q-skip").style.display = ""; $("q-next").style.display = "";
+    $("q-close").textContent = "Fechar fila";
+  }
+  function renderQDone(){
+    var enviados = qIndex;
+    $("q-prog").textContent = "";
+    $("q-name").textContent = "✅ Fila concluída";
+    $("q-ra").textContent = "";
+    $("q-msg").textContent = "Você percorreu as mensagens selecionadas. Os envios abertos ficaram registrados na aba Relatório.";
+    $("q-open").style.display = "none";
+    $("q-skip").style.display = "none"; $("q-next").style.display = "none";
+    $("q-close").textContent = "Concluir";
+  }
+  function closeQueue(){ $("qoverlay").classList.remove("show"); updateQueueBar(); }
+
+  $("q-start").addEventListener("click", startQueue);
+  $("q-open").addEventListener("click", function(){
+    var it = queue[qIndex]; if (!it) return;
+    window.open("https://wa.me/" + waNumber(it.coord.tel) + "?text=" + encodeURIComponent(it.msg), "_blank");
+    logSend(it.coord, it.ra, it.evs, true);            // registra sem toast (silencioso)
+    this.textContent = "✓ Aberto — toque em “Próximo →”";
+  });
+  $("q-next").addEventListener("click", function(){ qIndex++; renderQStep(); });
+  $("q-skip").addEventListener("click", function(){ qIndex++; renderQStep(); });
+  $("q-close").addEventListener("click", closeQueue);
+
   // ---------- Relatório ----------
-  function logSend(coord, ra, itens){
+  function logSend(coord, ra, itens, silent){
     logs.push({
       id: "l" + Date.now() + "-" + Math.floor(Math.random()*1e6),
       ts: Date.now(),
@@ -793,7 +963,7 @@
     });
     save(LS.log, logs);
     updateCounts();
-    toast("Registrado no relatório");
+    if (!silent) toast("Registrado no relatório");
   }
 
   function fmtDate(ts){ try { return new Date(ts).toLocaleDateString("pt-BR"); } catch(e){ return ""; } }
