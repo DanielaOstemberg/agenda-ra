@@ -139,15 +139,19 @@
   .row { display: flex; gap: 10px; }
   .row > * { flex: 1; }
 
-  button.btn {
+  .btn {
     font-family: inherit; font-size: var(--fs-3); font-weight: 700; cursor: pointer;
     border-radius: var(--radius-sm); padding: 12px 16px; border: 1px solid transparent;
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
     width: 100%; transition: filter .15s, background .15s;
+    text-decoration: none; box-sizing: border-box;
   }
-  button.btn:active { filter: brightness(.94); }
+  .btn:active { filter: brightness(.94); }
   .btn.primary { background: var(--accent); color: var(--accent-ink); }
   .btn.civic { background: var(--civic); color: #fff; }
+  .btn.whats { background: #25d366; color: #063; color: #fff; box-shadow: 0 2px 8px rgba(37,211,102,.35); }
+  .btn.whats:active { filter: brightness(.95); }
+  .btn.whats svg { width: 20px; height: 20px; flex-shrink: 0; }
   .btn.ghost { background: var(--surface); color: var(--ink); border-color: var(--border-strong); }
   .btn.small { width: auto; padding: 8px 12px; font-size: var(--fs-small); }
   .btn.tiny { width: auto; padding: 6px 10px; font-size: var(--fs-tiny); font-weight: 600; border-radius: 8px; }
@@ -366,6 +370,16 @@
         <button class="btn civic small" id="io-import">📥 Carregar código</button>
       </div>
     </div>
+
+    <div class="card">
+      <h2>Backup dos contatos</h2>
+      <p class="hint">Atualizar o app <b>não apaga</b> seus contatos. Ainda assim, guarde um backup: protege se você limpar o navegador ou trocar de aparelho.</p>
+      <p class="hint" id="bak-status">Sem backup automático ainda.</p>
+      <div class="row">
+        <button class="btn ghost small" id="bak-download">💾 Baixar backup</button>
+        <button class="btn ghost small" id="bak-restore">↩︎ Restaurar contatos</button>
+      </div>
+    </div>
   </section>
 
   <!-- AGENDA -->
@@ -428,7 +442,7 @@
     <div class="qname" id="q-name"></div>
     <div class="qra" id="q-ra"></div>
     <div class="qmsg" id="q-msg"></div>
-    <button class="btn primary" id="q-open">📲 Abrir no WhatsApp</button>
+    <button class="btn whats" id="q-open">Abrir no WhatsApp</button>
     <div class="qrow">
       <button class="btn ghost" id="q-skip">Pular</button>
       <button class="btn civic" id="q-next">Próximo →</button>
@@ -443,7 +457,8 @@
 (function(){
   "use strict";
   var LS = { coord: "agra_coords_v1", tmpl: "agra_tmpl_v1", auth: "agra_auth_v1", log: "agra_log_v1",
-             events: "agra_events_v1", sent: "agra_sent_v1", sel: "agra_sendsel_v1", texto: "agra_texto_v1" };
+             events: "agra_events_v1", sent: "agra_sent_v1", sel: "agra_sendsel_v1", texto: "agra_texto_v1",
+             coordBak: "agra_coords_bak_v1", geralSel: "agra_geralsel_v1" };
 
   // 35 RAs do DF + apelidos para detecção (ordem: mais específico primeiro)
   var RAS = [
@@ -485,6 +500,8 @@
   ];
   // lista ordenada alfabeticamente para os selects
   var RA_NAMES = RAS.map(function(r){ return r.n; }).sort(function(a,b){ return a.localeCompare(b,"pt"); });
+  // "RA" especial: coordenador geral, recebe a agenda completa (todos os eventos, independe de RA)
+  var ALL_RA = "Agenda completa (todas as RAs)";
 
   var DEFAULT_TMPL =
     "Olá, {nome}! 👋\n\n" +
@@ -582,13 +599,14 @@
   function save(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} }
   function $(id){ return document.getElementById(id); }
   function esc(s){ return (s||"").replace(/[&<>]/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c]; }); }
+  var WA_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38a9.9 9.9 0 0 0 4.79 1.22h.01c5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.82 9.82 0 0 0 12.04 2zm5.8 14.16c-.24.68-1.42 1.3-1.96 1.35-.5.05-.96.24-3.2-.67-2.7-1.06-4.42-3.8-4.56-3.98-.13-.18-1.1-1.46-1.1-2.79 0-1.33.7-1.98.95-2.25.24-.27.53-.34.71-.34.18 0 .35 0 .51.01.16.01.38-.06.59.45.24.58.82 2 .89 2.14.07.14.12.31.02.49-.09.18-.14.29-.27.45-.14.16-.29.36-.41.48-.14.14-.28.29-.12.56.16.27.71 1.17 1.53 1.9 1.05.94 1.94 1.23 2.21 1.37.27.14.43.12.59-.07.16-.18.68-.79.86-1.06.18-.27.36-.22.61-.13.25.09 1.6.75 1.87.89.27.14.45.2.52.31.07.12.07.68-.17 1.36z"/></svg>';
 
   // Dados iniciais (versão pré-carregada preenche este array; versão em branco fica vazio)
   var SEED = [];
   var _rawCoord = localStorage.getItem(LS.coord);
   var coords;
   if (_rawCoord){ try { coords = JSON.parse(_rawCoord) || []; } catch(e){ coords = []; } }
-  else { coords = SEED.map(function(s,i){ return { id: "seed"+i, ra: s.ra, nome: s.nome, tel: s.tel }; }); if (SEED.length) save(LS.coord, coords); }
+  else { coords = SEED.map(function(s,i){ return { id: "seed"+i, ra: s.ra, nome: s.nome, tel: s.tel }; }); if (SEED.length) saveCoords(); }
   // {id, ra, nome, tel}
   var events = load(LS.events, []);  // {id, txt, quando, desc, end, geo, chegada, ra, on} — sessão persistida
   var tmpl = load(LS.tmpl, DEFAULT_TMPL);
@@ -598,10 +616,18 @@
   var coordFilter = "", coordSort = "nome";   // filtro e ordenação da lista de contatos
   var sendSel = load(LS.sel, {});    // seleção da fila de envio: chave "ra||idCoord" -> false quando desmarcado
   var sent = load(LS.sent, {});      // já enviados nesta agenda: chave "ra||idCoord" -> true (some da lista)
+  var geralSel = load(LS.geralSel, {}); // eventos escolhidos para a "Agenda completa": id -> false quando desmarcado
   var queue = [], qIndex = 0;        // fila de envio em sequência
   function saveSession(){ save(LS.events, events); }
   function saveSent(){ save(LS.sent, sent); }
   function saveSel(){ save(LS.sel, sendSel); }
+  function saveGeralSel(){ save(LS.geralSel, geralSel); }
+  function geralInclui(x){ return geralSel[x.id] !== false; }   // evento entra na agenda completa?
+  // Salva contatos e mantém um BACKUP automático (só quando há contatos — nunca sobrescreve o backup com lista vazia)
+  function saveCoords(){
+    saveCoords();
+    if (coords.length) save(LS.coordBak, { ts: Date.now(), list: coords.map(function(c){ return { ra: c.ra, nome: c.nome, tel: c.tel }; }) });
+  }
 
   var toastT;
   function toast(msg){
@@ -678,6 +704,8 @@
   function fillRASelect(sel, selected){
     sel.innerHTML = "";
     var o0 = document.createElement("option"); o0.value=""; o0.textContent="— Selecione a RA —"; sel.appendChild(o0);
+    var oAll = document.createElement("option"); oAll.value=ALL_RA; oAll.textContent="📋 Agenda completa (todas as RAs)";
+    if (selected===ALL_RA) oAll.selected=true; sel.appendChild(oAll);
     RA_NAMES.forEach(function(n){
       var o = document.createElement("option"); o.value=n; o.textContent=n;
       if (n===selected) o.selected=true;
@@ -687,7 +715,8 @@
   fillRASelect($("f-ra"), "");
 
   // ---------- Coordenadores ----------
-  function nextId(){ return Math.max(0, Date.now()) + "-" + coords.length + "-" + Math.floor(performance.now()); }
+  var _idSeq = 0;
+  function nextId(){ return "c" + Date.now().toString(36) + "-" + (_idSeq++).toString(36); }  // contador garante unicidade (mesmo em importação em lote)
 
   $("add-coord").addEventListener("click", function(){
     var ra = $("f-ra").value, nome = $("f-nome").value.trim(), tel = $("f-tel").value.trim();
@@ -704,7 +733,7 @@
       coords.push({ id: nextId(), ra: ra, nome: nome, tel: tel });
       toast("Coordenador adicionado");
     }
-    save(LS.coord, coords);
+    saveCoords();
     $("f-nome").value=""; $("f-tel").value=""; fillRASelect($("f-ra"), "");
     renderCoords();
   });
@@ -739,10 +768,49 @@
     if (!incoming.length){ toast("Nenhum coordenador válido no código"); return; }
     if (coords.length && !confirm("Isto vai SUBSTITUIR sua lista atual por " + incoming.length + " coordenador(es). Continuar?")) return;
     coords = incoming;
-    save(LS.coord, coords);
+    saveCoords();
     $("io-box").value = "";
     renderCoords();
     toast(incoming.length + " coordenador(es) carregado(s)");
+  });
+
+  // ---------- Backup dos contatos ----------
+  function updateBakStatus(){
+    var el = $("bak-status"); if (!el) return;
+    var b = load(LS.coordBak, null);
+    if (b && b.list && b.list.length){
+      var d = new Date(b.ts);
+      var quando = ""; try { quando = " · " + d.toLocaleDateString("pt-BR") + " " + d.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}); } catch(e){}
+      if (!coords.length){ el.textContent = "⚠️ Sua lista está vazia, mas há um backup de " + b.list.length + " contato(s)" + quando + " — toque em Restaurar."; }
+      else { el.textContent = "Backup automático: " + b.list.length + " contato(s)" + quando; }
+    } else { el.textContent = "Sem backup automático ainda."; }
+  }
+  $("bak-download").addEventListener("click", function(){
+    var list = coords.length ? coords : (load(LS.coordBak, {list:[]}).list || []);
+    if (!list.length){ toast("Nada para salvar ainda"); return; }
+    var data = JSON.stringify({ app: "agenda-ra", ts: Date.now(), coords: list.map(function(c){ return { ra:c.ra, nome:c.nome, tel:c.tel }; }) }, null, 2);
+    try {
+      var blob = new Blob([data], { type: "application/json" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a"); a.href = url; a.download = "backup-contatos-agenda-ra.json";
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+      toast("Backup baixado");
+    } catch(e){
+      // fallback: coloca no campo de código para copiar
+      $("io-box").value = JSON.stringify(list.map(function(c){ return { ra:c.ra, nome:c.nome, tel:c.tel }; }));
+      copyText($("io-box").value);
+      toast("Backup copiado (cole em local seguro)");
+    }
+  });
+  $("bak-restore").addEventListener("click", function(){
+    var b = load(LS.coordBak, null);
+    if (!b || !b.list || !b.list.length){ toast("Nenhum backup encontrado"); return; }
+    if (coords.length && !confirm("Restaurar o backup de " + b.list.length + " contato(s)? Isto substitui a lista atual.")) return;
+    coords = b.list.map(function(x){ return { id: nextId(), ra: String(x.ra), nome: String(x.nome||""), tel: String(x.tel) }; });
+    saveCoords();
+    renderCoords();
+    toast(coords.length + " contato(s) restaurado(s)");
   });
 
   $("coord-filter").addEventListener("input", function(){ coordFilter = this.value; renderCoords(); });
@@ -787,11 +855,12 @@
       row.querySelector(".btn-del").addEventListener("click", function(){
         if (!confirm("Remover " + (c.nome || c.ra) + "?")) return;
         coords = coords.filter(function(x){ return x.id!==c.id; });
-        save(LS.coord, coords); renderCoords(); updateCounts();
+        saveCoords(); renderCoords(); updateCounts();
       });
       box.appendChild(row);
     });
     updateCounts();
+    updateBakStatus();
   }
 
   // ---------- Agenda / parsing ----------
@@ -822,7 +891,7 @@
     var blocks = splitEvents(text);
     if (!blocks.length){ toast("Cole o texto da agenda primeiro"); return; }
     var gdate = detectDate(text);   // data do cabeçalho, aplicada a todos os eventos sem data própria
-    sent = {}; sendSel = {}; saveSent(); saveSel();   // nova agenda: zera "já enviados" e a seleção
+    sent = {}; sendSel = {}; geralSel = {}; saveSent(); saveSel(); saveGeralSel();   // nova agenda: zera "já enviados" e as seleções
     events = blocks.map(function(b,i){
       var q = extractQuando(b);
       var when = [q.date || gdate, q.time].filter(Boolean).join(" · ");
@@ -894,28 +963,39 @@
   }
 
   // ---------- Enviar ----------
+  function evItem(e){
+    return { id: e.id, ra: e.ra || "", quando: e.quando || "", desc: (e.desc || e.txt || "").replace(/\n+/g," ").trim(), chegada: (e.chegada || "").trim(), end: (e.end || "").trim(), geo: (e.geo || "").trim() };
+  }
   function groupForSend(){
     var byRA = {};
     events.forEach(function(e){
       if (!e.on || !e.ra) return;
-      (byRA[e.ra] = byRA[e.ra] || []).push({ quando: e.quando || "", desc: (e.desc || e.txt || "").replace(/\n+/g," ").trim(), chegada: (e.chegada || "").trim(), end: (e.end || "").trim(), geo: (e.geo || "").trim() });
+      (byRA[e.ra] = byRA[e.ra] || []).push(evItem(e));
     });
+    // Bucket "Agenda completa" p/ coordenador geral: todos os eventos marcados, independe de RA
+    if (coords.some(function(c){ return c.ra === ALL_RA; })){
+      var all = [];
+      events.forEach(function(e){ if (e.on) all.push(evItem(e)); });
+      if (all.length) byRA[ALL_RA] = all;
+    }
     return byRA;
   }
 
   function buildMessage(nome, ra, evs){
+    var geral = (ra === ALL_RA);
     var bullets = evs.map(function(x){
       var when = x.quando ? "🗓️ " + x.quando + "\n   " : "";
+      var raL = (geral && x.ra) ? "\n   🏙️ " + x.ra : "";   // na agenda completa, mostra a RA de cada evento
       // mostra a chegada só quando informada e diferente do horário do slot
       var chega = (x.chegada && normHora(x.chegada) && normHora(x.chegada) !== normHora(x.quando)) ? "\n   🕒 Chegar às " + x.chegada : "";
       var end = x.end ? "\n   📍 " + x.end : "";
       var geo = x.geo ? "\n   🗺️ " + x.geo : "";
-      return "• " + when + x.desc + chega + end + geo;
+      return "• " + when + x.desc + raL + chega + end + geo;
     }).join("\n\n");
     return tmpl
       .replace(/{nome}/g, nome || "coordenador(a)")
       .replace(/{autoridade}/g, authority || "a autoridade")
-      .replace(/{ra}/g, ra)
+      .replace(/{ra}/g, geral ? "toda a agenda do dia" : ra)
       .replace(/{eventos}/g, bullets);
   }
 
@@ -946,12 +1026,13 @@
     var missing = ras.filter(function(ra){ return !coords.some(function(c){ return c.ra===ra; }); });
 
     // Resumo + progresso
-    var totalEventos = ras.reduce(function(s,ra){ return s + byRA[ra].length; }, 0);
+    var totalEventos = events.filter(function(e){ return e.on && e.ra; }).length;
+    var rasReais = ras.filter(function(ra){ return ra !== ALL_RA; });
     var allRecip = [];
     ras.forEach(function(ra){ coords.filter(function(c){ return c.ra===ra; }).forEach(function(c){ allRecip.push(ra+"||"+c.id); }); });
     var enviadosN = allRecip.filter(function(k){ return sent[k]; }).length;
     var sumRow = document.createElement("div"); sumRow.className="rel-summary"; sumRow.style.marginBottom="10px";
-    [[totalEventos,"Eventos"],[ras.length,"RAs"],[allRecip.length,"A notificar"],[missing.length,"Sem coord."]].forEach(function(s){
+    [[totalEventos,"Eventos"],[rasReais.length,"RAs"],[allRecip.length,"A notificar"],[missing.length,"Sem coord."]].forEach(function(s){
       var d = document.createElement("div"); d.className="rel-stat";
       d.innerHTML = '<div class="num">'+s[0]+'</div><div class="cap">'+s[1]+'</div>';
       sumRow.appendChild(d);
@@ -978,12 +1059,37 @@
       if (those.length && !active.length) return;   // todos dessa RA já enviados
 
       var g = document.createElement("div"); g.className="card group";
+      // Na agenda completa, envia só os eventos escolhidos (padrão: todos)
+      var evsUse = (ra===ALL_RA) ? evs.filter(geralInclui) : evs;
       var head = document.createElement("div"); head.className="ghead";
-      head.innerHTML = '<span class="ra">📍 '+esc(ra)+'</span><span class="who">'+evs.length+' evento(s)</span>';
+      var cntTxt = (ra===ALL_RA) ? (evsUse.length + " de " + evs.length + " evento(s)") : (evs.length + " evento(s)");
+      head.innerHTML = '<span class="ra">'+(ra===ALL_RA?"📋 ":"📍 ")+esc(ra)+'</span><span class="who">'+cntTxt+'</span>';
       g.appendChild(head);
 
+      // Seletor de eventos da "Agenda completa": escolher quais incluir
+      if (ra===ALL_RA){
+        var pdet = document.createElement("details"); pdet.className="tmpl";
+        pdet.innerHTML = '<summary>Escolher eventos ('+evsUse.length+' de '+evs.length+')</summary>';
+        var pcard = document.createElement("div"); pcard.className="card";
+        var prow = document.createElement("div"); prow.className="row"; prow.style.marginBottom="8px";
+        var bAll = document.createElement("button"); bAll.className="btn ghost small"; bAll.textContent="✔ Todas";
+        var bNone = document.createElement("button"); bNone.className="btn ghost small"; bNone.textContent="✖ Nenhuma";
+        bAll.addEventListener("click", function(){ evs.forEach(function(x){ geralSel[x.id]=true; }); saveGeralSel(); renderSendSoft(); });
+        bNone.addEventListener("click", function(){ evs.forEach(function(x){ geralSel[x.id]=false; }); saveGeralSel(); renderSendSoft(); });
+        prow.appendChild(bAll); prow.appendChild(bNone); pcard.appendChild(prow);
+        evs.forEach(function(x){
+          var lab = document.createElement("label"); lab.className="sel-line";
+          var chk = document.createElement("input"); chk.type="checkbox"; chk.checked = geralInclui(x);
+          var sp = document.createElement("span"); sp.className="who";
+          sp.textContent = (x.quando? x.quando+" · " : "") + (x.ra? x.ra+" · " : "") + x.desc;
+          lab.appendChild(chk); lab.appendChild(sp); pcard.appendChild(lab);
+          chk.addEventListener("change", function(){ geralSel[x.id]=chk.checked; saveGeralSel(); renderSendSoft(); });
+        });
+        pdet.appendChild(pcard); g.appendChild(pdet);
+      }
+
       if (!those.length){
-        var msg = buildMessage("", ra, evs);
+        var msg = buildMessage("", ra, evsUse);
         var prev = document.createElement("div"); prev.className="msg-prev"; prev.textContent=msg;
         g.appendChild(prev);
         var row0 = document.createElement("div"); row0.className="send-row";
@@ -995,7 +1101,7 @@
         g.appendChild(row0);
       } else {
         active.forEach(function(c){
-          var msg = buildMessage(c.nome, ra, evs);
+          var msg = buildMessage(c.nome, ra, evsUse);
           var key = ra + "||" + c.id;
           if (sendSel[key] === undefined) sendSel[key] = true;   // vem selecionado por padrão
 
@@ -1018,7 +1124,7 @@
 
           var sr = document.createElement("div"); sr.className="send-row";
           var a = document.createElement("a");
-          a.className="btn primary"; a.textContent="Enviar no WhatsApp";
+          a.className="btn whats"; a.innerHTML = WA_ICON + "<span>Enviar no WhatsApp</span>";
           a.href = "https://wa.me/"+waNumber(c.tel)+"?text="+encodeURIComponent(msg);
           a.target="_blank"; a.rel="noopener";
           a.addEventListener("click", (function(coord, region, items){
@@ -1029,7 +1135,7 @@
               sent[region+"||"+coord.id] = true; saveSent();   // marca enviado -> some ao voltar/renderizar
               setTimeout(function(){ renderSendSoft(); }, 400);  // deixa o WhatsApp abrir antes de re-renderizar
             };
-          })(c, ra, evs));
+          })(c, ra, evsUse));
           var cp = document.createElement("button"); cp.className="btn ghost"; cp.innerHTML="Copiar"; cp.style.flex="0 0 auto";
           cp.addEventListener("click", function(){ copyText(msg); });
           sr.appendChild(a); sr.appendChild(cp);
@@ -1069,7 +1175,7 @@
     var out = [];
     var byRA = groupForSend();
     Object.keys(byRA).sort(function(a,b){ return a.localeCompare(b,"pt"); }).forEach(function(ra){
-      var evs = byRA[ra];
+      var evs = (ra===ALL_RA) ? byRA[ra].filter(geralInclui) : byRA[ra];
       coords.filter(function(c){ return c.ra===ra; }).forEach(function(c){
         if (sendSel[ra+"||"+c.id] === false) return;
         if (sent[ra+"||"+c.id]) return;                 // já enviado -> fora da fila
@@ -1105,7 +1211,7 @@
     $("q-name").textContent = it.coord.nome || "(sem nome)";
     $("q-ra").textContent = "📍 " + it.ra + " · " + fmtTel(it.coord.tel);
     $("q-msg").textContent = it.msg;
-    var ob = $("q-open"); ob.textContent = "📲 Abrir no WhatsApp"; ob.style.display = "";
+    var ob = $("q-open"); ob.innerHTML = WA_ICON + "<span>Abrir no WhatsApp</span>"; ob.style.display = "";
     $("q-skip").style.display = ""; $("q-next").style.display = "";
     $("q-close").textContent = "Fechar fila";
   }
@@ -1258,6 +1364,16 @@
     $("cnt-env").textContent = sendable;
     $("cnt-rel").textContent = logs.length;
   }
+
+  // Repara IDs duplicados/ausentes de contatos antigos (versões que geravam IDs iguais na importação)
+  (function fixCoordIds(){
+    var seen = {}, changed = false;
+    coords.forEach(function(c){
+      if (!c.id || seen[c.id]){ c.id = nextId(); changed = true; }
+      seen[c.id] = true;
+    });
+    if (changed){ saveCoords(); sent = {}; saveSent(); }   // IDs mudaram: zera "enviados" antigo (evita marcação errada)
+  })();
 
   renderCoords();
   // Restaura a agenda separada da sessão anterior (se houver)
