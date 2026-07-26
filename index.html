@@ -486,42 +486,73 @@
   // NÃO é data. Testado sobre o texto normalizado (sem acento, minúsculo).
   var ADDR_HINT = /(quadra|conjunto|conj|qnm|qnp|qng|qnn|qnl|qms|qms|\bqn\b|\bqi\b|\bqs\b|\bqe\b|\bql\b|\bqd\b|\bqr\b|\bq\b|cnb|cln|sqn|sqs|shcgn|shis|smpw|lote|bloco|\bbl\b|modulo|setor|chacara|\brua\b|avenida|\bav\b|casa|apto|apartamento|\bn[º°o]?\b)\s*[\wº°.]*\s*$/;
 
-  // Extrai data/horário de um bloco e devolve a descrição completa (sem perder detalhes)
+  var MESES = {janeiro:"01",fevereiro:"02","marco":"03",abril:"04",maio:"05",junho:"06",julho:"07",agosto:"08",setembro:"09",outubro:"10",novembro:"11",dezembro:"12"};
+  // Data "global" da agenda (ex.: cabeçalho "Sábado, 25 de julho de 2026") -> "25/07/2026"
+  function detectDate(text){
+    var s = (text||"").replace(/\s+/g," ");
+    var m = s.match(/\b(\d{1,2})\s+de\s+(janeiro|fevereiro|mar[çc]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)(?:\s+de\s+(\d{2,4}))?/i);
+    if (m){ return ("0"+m[1]).slice(-2) + "/" + MESES[norm(m[2])] + (m[3] ? "/" + m[3] : ""); }
+    m = s.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
+    if (m) return m[0];
+    return "";
+  }
+
+  // Extrai {date, time, desc} de um bloco. Reconhece o formato oficial (evento começa
+  // pelo horário, ex.: "09h30 ..." / "14h30CLASSIC...") e o formato simples (uma linha).
   function extractQuando(block){
     var s = (block||"").replace(/\s+/g," ").trim();
     var low = norm(s);
-
-    // ---- DATA ----
-    var date = "";
-    // dd/mm[/aaaa] — ignora padrões de endereço (ex.: "quadra 9/6") e datas implausíveis
-    var reDMY = /\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/g, m;
-    while ((m = reDMY.exec(s))){
-      var dd = +m[1], mm = +m[2];
-      if (dd < 1 || dd > 31 || mm < 1 || mm > 12) continue;      // não é data plausível
-      if (ADDR_HINT.test(low.slice(Math.max(0, m.index - 16), m.index))) continue; // "/" de endereço
-      date = m[0];
-      break;                                                     // 1ª data válida (geralmente no título)
-    }
-    // data por extenso: "9 de junho [de 2026]"
-    if (!date){
-      var me = s.match(/\b\d{1,2}\s+de\s+(?:janeiro|fevereiro|mar[çc]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)(?:\s+de\s+\d{2,4})?\b/i);
-      if (me) date = me[0];
-    }
+    var date = "", time = "";
 
     // ---- HORA ----
-    var time = (s.match(/\b\d{1,2}:\d{2}\b/) || [""])[0]
-            || (s.match(/\b\d{1,2}\s*h(?:\s*\d{2})?\b/i) || [""])[0]
-            || (s.match(/\b\d{1,2}\s*horas?\b/i) || [""])[0];
+    // Formato oficial: o bloco começa com o horário do compromisso.
+    var lead = s.match(/^(\d{1,2})\s*h\s*(\d{2})?/);
+    if (lead) time = lead[1] + "h" + (lead[2] || "");
 
-    var quando = [date, time].filter(Boolean).join(" · ");
+    // ---- DATA ---- (só quando NÃO é oficial; no oficial a data vem do cabeçalho)
+    if (!lead){
+      var reDMY = /\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/g, m;
+      while ((m = reDMY.exec(s))){
+        var dd = +m[1], mm = +m[2];
+        if (dd < 1 || dd > 31 || mm < 1 || mm > 12) continue;      // não é data plausível
+        if (ADDR_HINT.test(low.slice(Math.max(0, m.index - 16), m.index))) continue; // "/" de endereço
+        date = m[0];
+        break;                                                     // 1ª data válida
+      }
+      if (!date){
+        var me = s.match(/\b\d{1,2}\s+de\s+(?:janeiro|fevereiro|mar[çc]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)(?:\s+de\s+\d{2,4})?\b/i);
+        if (me) date = me[0];
+      }
+      // hora genérica (formato simples)
+      time = (s.match(/\b\d{1,2}:\d{2}\b/) || [""])[0]
+          || (s.match(/\b\d{1,2}\s*h(?:\s*\d{2})?\b/i) || [""])[0]
+          || (s.match(/\b\d{1,2}\s*horas?\b/i) || [""])[0];
+    }
+
+    // ---- DESCRIÇÃO ----
     var desc = s;
-    if (date) desc = desc.replace(date, " ");
-    if (time) desc = desc.replace(time, " ");
+    if (lead){
+      desc = desc.slice(lead[0].length);                 // remove o horário-guia
+      if (desc.indexOf("•") >= 0) desc = desc.split("•")[0];  // no oficial, título até o 1º "•"
+    } else {
+      if (date) desc = desc.replace(date, " ");
+      if (time) desc = desc.replace(time, " ");
+      if (time) desc = desc.replace(/\s+(?:[àa]s?|das?|dos?)\s*$/i, "");
+    }
     desc = desc.replace(/\s+/g," ").trim();
-    if (time) desc = desc.replace(/\s+(?:[àa]s?|das?|dos?)\s*$/i, "");   // remove "às/das" solto onde estava a hora
-    desc = desc.replace(/^[\s\-–—:,•|]+/, "").replace(/[\s\-–—:,|]+$/,"").trim();
+    desc = desc.replace(/^[\s\-–—:,•|.]+/, "").replace(/[\s\-–—:,|]+$/,"").trim();
     if (!desc) desc = s;              // nunca perde o conteúdo
-    return { quando: quando, desc: desc };
+    return { date: date, time: time, desc: desc };
+  }
+  // Link do mapa do evento (• Geolocalização: https://...) — para no espaço ou no "•"
+  function extractGeo(block){
+    var m = (block||"").match(/geolocaliza[çc][ãa]o:\s*(https?:\/\/[^\s•|]+)/i);
+    return m ? m[1].replace(/[.,;]+$/,"") : "";
+  }
+  // Endereço por extenso do evento (• Endereço: ... até o próximo "•")
+  function extractEndereco(block){
+    var m = (block||"").match(/endere[çc]o:\s*([^•]+)/i);
+    return m ? m[1].replace(/\s+/g," ").trim().replace(/[.,;|]+$/,"") : "";
   }
   function load(k, def){ try { var v = localStorage.getItem(k); return v==null?def:JSON.parse(v); } catch(e){ return def; } }
   function save(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} }
@@ -549,14 +580,19 @@
     clearTimeout(toastT); toastT = setTimeout(function(){ t.classList.remove("show"); }, 1800);
   }
 
-  // Detecta RA num bloco de texto (word-boundary sobre texto normalizado)
+  // Detecta RA num bloco de texto (word-boundary sobre texto normalizado).
+  // Se houver "Endereço:", procura primeiro nessa parte (mais confiável no formato oficial).
   function detectRA(text){
     var t = norm(text);
-    for (var i=0;i<RAS.length;i++){
-      var al = RAS[i].a;
-      for (var j=0;j<al.length;j++){
-        var re = new RegExp("\\b" + al[j].replace(/[.*+?^${}()|[\]\\]/g,"\\$&") + "\\b");
-        if (re.test(t)) return RAS[i].n;
+    var addr = t.match(/endereco:\s*([^•]*)/);
+    var scopes = addr ? [addr[1], t] : [t];
+    for (var s=0;s<scopes.length;s++){
+      for (var i=0;i<RAS.length;i++){
+        var al = RAS[i].a;
+        for (var j=0;j<al.length;j++){
+          var re = new RegExp("\\b" + al[j].replace(/[.*+?^${}()|[\]\\]/g,"\\$&") + "\\b");
+          if (re.test(scopes[s])) return RAS[i].n;
+        }
       }
     }
     return "";
@@ -702,11 +738,19 @@
   $("f-autoridade").addEventListener("input", function(){ authority = this.value; save(LS.auth, authority); renderSendSoft(); });
 
   function splitEvents(text){
-    var t = text.replace(/\r/g,"").trim();
+    var t = (text||"").replace(/\r/g," ").trim();
     if (!t) return [];
+    // Agenda oficial: eventos delimitados por "ASCOM/CERIMONIAL"; cada evento começa pelo horário.
+    if (/ascom\s*\/\s*cerimonial/i.test(t)){
+      return t.split(/ascom\s*\/\s*cerimonial/i).map(function(chunk){
+        var m = chunk.match(/\d{1,2}\s*h\s*\d{0,2}/);   // 1º horário do trecho = início do evento (descarta cabeçalho)
+        return m ? chunk.slice(m.index).replace(/\s+/g," ").trim() : "";
+      }).filter(function(b){ return b.length>2; });
+    }
+    // Formato simples: por linha em branco, ou uma linha por evento.
     var blocks;
-    if (/\n\s*\n/.test(t)) blocks = t.split(/\n\s*\n+/);   // separados por linha em branco
-    else blocks = t.split(/\n+/);                          // ou uma linha por evento
+    if (/\n\s*\n/.test(t)) blocks = t.split(/\n\s*\n+/);
+    else blocks = t.split(/\n+/);
     return blocks.map(function(b){ return b.trim(); }).filter(function(b){ return b.length>2; });
   }
 
@@ -714,9 +758,11 @@
     var text = $("f-texto").value;
     var blocks = splitEvents(text);
     if (!blocks.length){ toast("Cole o texto da agenda primeiro"); return; }
+    var gdate = detectDate(text);   // data do cabeçalho, aplicada a todos os eventos sem data própria
     events = blocks.map(function(b,i){
       var q = extractQuando(b);
-      return { id: "e"+i+"-"+Math.floor(performance.now()), txt: b, quando: q.quando, desc: q.desc, ra: detectRA(b), on: true };
+      var when = [q.date || gdate, q.time].filter(Boolean).join(" · ");
+      return { id: "e"+i+"-"+Math.floor(performance.now()), txt: b, quando: when, desc: q.desc, end: extractEndereco(b), geo: extractGeo(b), ra: detectRA(b), on: true };
     });
     renderEvents();
     $("events-card").style.display="block";
@@ -740,9 +786,17 @@
       var dLbl = document.createElement("span"); dLbl.className="mini-lbl"; dLbl.textContent="O que é o evento (detalhado)";
       var dInp = document.createElement("textarea"); dInp.className="ev-desc"; dInp.rows=2;
       dInp.value = e.desc || ""; dInp.placeholder="Ex.: Inauguração da praça central, com presença de lideranças locais";
+      var eLbl = document.createElement("span"); eLbl.className="mini-lbl"; eLbl.textContent="Endereço";
+      var eInp = document.createElement("input"); eInp.className="ev-end"; eInp.type="text";
+      eInp.value = e.end || ""; eInp.placeholder="Ex.: STRC Trecho 4 - SIA (opcional)";
+      var gLbl = document.createElement("span"); gLbl.className="mini-lbl"; gLbl.textContent="Geolocalização (link do mapa)";
+      var gInp = document.createElement("input"); gInp.className="ev-geo"; gInp.type="url"; gInp.inputMode="url";
+      gInp.value = e.geo || ""; gInp.placeholder="Cole o link do mapa (opcional)";
       var wWrap = document.createElement("div"); wWrap.appendChild(wLbl); wWrap.appendChild(wInp);
       var dWrap = document.createElement("div"); dWrap.appendChild(dLbl); dWrap.appendChild(dInp);
-      fields.appendChild(wWrap); fields.appendChild(dWrap);
+      var eWrap = document.createElement("div"); eWrap.appendChild(eLbl); eWrap.appendChild(eInp);
+      var gWrap = document.createElement("div"); gWrap.appendChild(gLbl); gWrap.appendChild(gInp);
+      fields.appendChild(wWrap); fields.appendChild(dWrap); fields.appendChild(eWrap); fields.appendChild(gWrap);
       div.appendChild(fields);
 
       var sel = document.createElement("select");
@@ -756,6 +810,8 @@
 
       wInp.addEventListener("input", function(){ e.quando = wInp.value; });
       dInp.addEventListener("input", function(){ e.desc = dInp.value; });
+      eInp.addEventListener("input", function(){ e.end = eInp.value.trim(); });
+      gInp.addEventListener("input", function(){ e.geo = gInp.value.trim(); });
       sel.addEventListener("change", function(){
         e.ra = sel.value;
         div.classList.toggle("noRA", !e.ra);
@@ -772,7 +828,7 @@
     var byRA = {};
     events.forEach(function(e){
       if (!e.on || !e.ra) return;
-      (byRA[e.ra] = byRA[e.ra] || []).push({ quando: e.quando || "", desc: (e.desc || e.txt || "").replace(/\n+/g," ").trim() });
+      (byRA[e.ra] = byRA[e.ra] || []).push({ quando: e.quando || "", desc: (e.desc || e.txt || "").replace(/\n+/g," ").trim(), end: (e.end || "").trim(), geo: (e.geo || "").trim() });
     });
     return byRA;
   }
@@ -780,7 +836,9 @@
   function buildMessage(nome, ra, evs){
     var bullets = evs.map(function(x){
       var when = x.quando ? "🗓️ " + x.quando + "\n   " : "";
-      return "• " + when + x.desc;
+      var end = x.end ? "\n   📍 " + x.end : "";
+      var geo = x.geo ? "\n   🗺️ " + x.geo : "";
+      return "• " + when + x.desc + end + geo;
     }).join("\n\n");
     return tmpl
       .replace(/{nome}/g, nome || "coordenador(a)")
