@@ -379,6 +379,10 @@
         <button class="btn ghost small" id="bak-download">💾 Baixar backup</button>
         <button class="btn ghost small" id="bak-restore">↩︎ Restaurar contatos</button>
       </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn civic small" id="bak-file-btn">📂 Restaurar de arquivo</button>
+      </div>
+      <input type="file" id="bak-file" accept=".json,application/json,text/plain" style="display:none">
     </div>
   </section>
 
@@ -458,7 +462,7 @@
   "use strict";
   var LS = { coord: "agra_coords_v1", tmpl: "agra_tmpl_v1", auth: "agra_auth_v1", log: "agra_log_v1",
              events: "agra_events_v1", sent: "agra_sent_v1", sel: "agra_sendsel_v1", texto: "agra_texto_v1",
-             coordBak: "agra_coords_bak_v1", geralSel: "agra_geralsel_v1" };
+             coordBak: "agra_coords_bak_v1", geralSel: "agra_geralsel_v1", apoioSel: "agra_apoiosel_v1" };
 
   // 35 RAs do DF + apelidos para detecção (ordem: mais específico primeiro)
   var RAS = [
@@ -502,6 +506,8 @@
   var RA_NAMES = RAS.map(function(r){ return r.n; }).sort(function(a,b){ return a.localeCompare(b,"pt"); });
   // "RA" especial: coordenador geral, recebe a agenda completa (todos os eventos, independe de RA)
   var ALL_RA = "Agenda completa (todas as RAs)";
+  // "RA" especial: apoiador — você escolhe individualmente quais eventos enviar para essa pessoa
+  var SUP_RA = "Apoiador (agenda personalizada)";
 
   var DEFAULT_TMPL =
     "Olá, {nome}! 👋\n\n" +
@@ -617,15 +623,19 @@
   var sendSel = load(LS.sel, {});    // seleção da fila de envio: chave "ra||idCoord" -> false quando desmarcado
   var sent = load(LS.sent, {});      // já enviados nesta agenda: chave "ra||idCoord" -> true (some da lista)
   var geralSel = load(LS.geralSel, {}); // eventos escolhidos para a "Agenda completa": id -> false quando desmarcado
+  var apoioSel = load(LS.apoioSel, {}); // eventos escolhidos por apoiador: "idContato||idEvento" -> true quando incluído
   var queue = [], qIndex = 0;        // fila de envio em sequência
   function saveSession(){ save(LS.events, events); }
   function saveSent(){ save(LS.sent, sent); }
   function saveSel(){ save(LS.sel, sendSel); }
   function saveGeralSel(){ save(LS.geralSel, geralSel); }
   function geralInclui(x){ return geralSel[x.id] !== false; }   // evento entra na agenda completa?
+  function saveApoioSel(){ save(LS.apoioSel, apoioSel); }
+  function apoioInclui(cid, x){ return apoioSel[cid + "||" + x.id] === true; }   // apoiador: só o que for escolhido (padrão: nenhum)
+  function apoioEvs(cid){ return events.filter(function(e){ return e.on; }).map(evItem).filter(function(x){ return apoioInclui(cid, x); }); }
   // Salva contatos e mantém um BACKUP automático (só quando há contatos — nunca sobrescreve o backup com lista vazia)
   function saveCoords(){
-    saveCoords();
+    save(LS.coord, coords);
     if (coords.length) save(LS.coordBak, { ts: Date.now(), list: coords.map(function(c){ return { ra: c.ra, nome: c.nome, tel: c.tel }; }) });
   }
 
@@ -706,6 +716,8 @@
     var o0 = document.createElement("option"); o0.value=""; o0.textContent="— Selecione a RA —"; sel.appendChild(o0);
     var oAll = document.createElement("option"); oAll.value=ALL_RA; oAll.textContent="📋 Agenda completa (todas as RAs)";
     if (selected===ALL_RA) oAll.selected=true; sel.appendChild(oAll);
+    var oSup = document.createElement("option"); oSup.value=SUP_RA; oSup.textContent="🤝 Apoiador (escolho os eventos)";
+    if (selected===SUP_RA) oSup.selected=true; sel.appendChild(oSup);
     RA_NAMES.forEach(function(n){
       var o = document.createElement("option"); o.value=n; o.textContent=n;
       if (n===selected) o.selected=true;
@@ -756,22 +768,27 @@
     copyText(code);
     toast("Código gerado e copiado");
   });
+  // Aplica uma lista recebida (código colado OU arquivo de backup). Aceita array puro ou {coords:[...]}.
+  function applyIncoming(data, limpaBox){
+    if (data && !Array.isArray(data) && Array.isArray(data.coords)) data = data.coords;  // formato do arquivo de backup
+    if (!Array.isArray(data)){ toast("Formato inválido"); return; }
+    var incoming = data.filter(function(x){ return x && x.ra && x.tel; }).map(function(x){
+      return { id: nextId(), ra: String(x.ra), nome: String(x.nome||""), tel: String(x.tel) };
+    });
+    if (!incoming.length){ toast("Nenhum contato válido encontrado"); return; }
+    if (coords.length && !confirm("Isto vai SUBSTITUIR sua lista atual (" + coords.length + " contato(s)) por " + incoming.length + " contato(s). Continuar?")) return;
+    coords = incoming;
+    saveCoords();
+    if (limpaBox) $("io-box").value = "";
+    renderCoords();
+    toast(incoming.length + " contato(s) carregado(s)");
+  }
   $("io-import").addEventListener("click", function(){
     var raw = ($("io-box").value || "").trim();
     if (!raw){ toast("Cole um código primeiro"); return; }
-    var arr;
-    try { arr = JSON.parse(raw); } catch(e){ toast("Código inválido"); return; }
-    if (!Array.isArray(arr)){ toast("Código inválido"); return; }
-    var incoming = arr.filter(function(x){ return x && x.ra && x.tel; }).map(function(x){
-      return { id: nextId(), ra: String(x.ra), nome: String(x.nome||""), tel: String(x.tel) };
-    });
-    if (!incoming.length){ toast("Nenhum coordenador válido no código"); return; }
-    if (coords.length && !confirm("Isto vai SUBSTITUIR sua lista atual por " + incoming.length + " coordenador(es). Continuar?")) return;
-    coords = incoming;
-    saveCoords();
-    $("io-box").value = "";
-    renderCoords();
-    toast(incoming.length + " coordenador(es) carregado(s)");
+    var data;
+    try { data = JSON.parse(raw); } catch(e){ toast("Código inválido"); return; }
+    applyIncoming(data, true);
   });
 
   // ---------- Backup dos contatos ----------
@@ -802,6 +819,18 @@
       copyText($("io-box").value);
       toast("Backup copiado (cole em local seguro)");
     }
+  });
+  $("bak-file-btn").addEventListener("click", function(){ $("bak-file").click(); });
+  $("bak-file").addEventListener("change", function(){
+    var f = this.files && this.files[0]; if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function(){
+      var data; try { data = JSON.parse(String(reader.result||"")); } catch(e){ toast("Arquivo inválido"); return; }
+      applyIncoming(data, false);
+    };
+    reader.onerror = function(){ toast("Não foi possível ler o arquivo"); };
+    reader.readAsText(f);
+    this.value = "";   // permite escolher o mesmo arquivo de novo depois
   });
   $("bak-restore").addEventListener("click", function(){
     var b = load(LS.coordBak, null);
@@ -891,7 +920,7 @@
     var blocks = splitEvents(text);
     if (!blocks.length){ toast("Cole o texto da agenda primeiro"); return; }
     var gdate = detectDate(text);   // data do cabeçalho, aplicada a todos os eventos sem data própria
-    sent = {}; sendSel = {}; geralSel = {}; saveSent(); saveSel(); saveGeralSel();   // nova agenda: zera "já enviados" e as seleções
+    sent = {}; sendSel = {}; geralSel = {}; apoioSel = {}; saveSent(); saveSel(); saveGeralSel(); saveApoioSel();   // nova agenda: zera "já enviados" e as seleções
     events = blocks.map(function(b,i){
       var q = extractQuando(b);
       var when = [q.date || gdate, q.time].filter(Boolean).join(" · ");
@@ -982,10 +1011,10 @@
   }
 
   function buildMessage(nome, ra, evs){
-    var geral = (ra === ALL_RA);
+    var geral = (ra === ALL_RA), apoio = (ra === SUP_RA), mostraRA = geral || apoio;
     var bullets = evs.map(function(x){
       var when = x.quando ? "🗓️ " + x.quando + "\n   " : "";
-      var raL = (geral && x.ra) ? "\n   🏙️ " + x.ra : "";   // na agenda completa, mostra a RA de cada evento
+      var raL = (mostraRA && x.ra) ? "\n   🏙️ " + x.ra : "";   // agenda completa/apoiador: mostra a RA de cada evento
       // mostra a chegada só quando informada e diferente do horário do slot
       var chega = (x.chegada && normHora(x.chegada) && normHora(x.chegada) !== normHora(x.quando)) ? "\n   🕒 Chegar às " + x.chegada : "";
       var end = x.end ? "\n   📍 " + x.end : "";
@@ -995,7 +1024,7 @@
     return tmpl
       .replace(/{nome}/g, nome || "coordenador(a)")
       .replace(/{autoridade}/g, authority || "a autoridade")
-      .replace(/{ra}/g, geral ? "toda a agenda do dia" : ra)
+      .replace(/{ra}/g, geral ? "toda a agenda do dia" : (apoio ? "a agenda que separei para você" : ra))
       .replace(/{eventos}/g, bullets);
   }
 
@@ -1015,8 +1044,9 @@
 
     var byRA = groupForSend();
     var ras = Object.keys(byRA).sort(function(a,b){ return a.localeCompare(b,"pt"); });
+    var temApoio = coords.some(function(c){ return c.ra===SUP_RA; }) && events.some(function(e){ return e.on; });
 
-    if (!ras.length){
+    if (!ras.length && !temApoio){
       var em = document.createElement("div"); em.className="empty";
       em.textContent = "Nada para enviar ainda. Vá em Agenda, cole o PDF e separe por RA.";
       area.appendChild(em); updateCounts(); return;
@@ -1030,6 +1060,7 @@
     var rasReais = ras.filter(function(ra){ return ra !== ALL_RA; });
     var allRecip = [];
     ras.forEach(function(ra){ coords.filter(function(c){ return c.ra===ra; }).forEach(function(c){ allRecip.push(ra+"||"+c.id); }); });
+    coords.filter(function(c){ return c.ra===SUP_RA; }).forEach(function(c){ allRecip.push(SUP_RA+"||"+c.id); });
     var enviadosN = allRecip.filter(function(k){ return sent[k]; }).length;
     var sumRow = document.createElement("div"); sumRow.className="rel-summary"; sumRow.style.marginBottom="10px";
     [[totalEventos,"Eventos"],[rasReais.length,"RAs"],[allRecip.length,"A notificar"],[missing.length,"Sem coord."]].forEach(function(s){
@@ -1145,6 +1176,90 @@
       area.appendChild(g);
     });
 
+    // ===== Apoiadores (cada um recebe os eventos que você escolher só para ele) =====
+    var sups = coords.filter(function(c){ return c.ra === SUP_RA; });
+    if (sups.length){
+      var allEvs = events.filter(function(e){ return e.on; }).map(evItem);
+      var sh = document.createElement("div"); sh.className="ghead"; sh.style.margin="18px 0 8px";
+      sh.innerHTML = '<span class="ra">🤝 Apoiadores</span><span class="who">'+sups.length+' pessoa(s) · agenda personalizada</span>';
+      area.appendChild(sh);
+
+      sups.forEach(function(c){
+        var key = SUP_RA + "||" + c.id;
+        if (sent[key]){ sentList.push({ ra: SUP_RA, c: c }); return; }   // já enviado -> sai da lista ativa
+
+        var g = document.createElement("div"); g.className="card group";
+        if (sendSel[key] === undefined) sendSel[key] = true;
+        var selLine = document.createElement("label"); selLine.className="sel-line";
+        var selChk = document.createElement("input"); selChk.type="checkbox"; selChk.checked = sendSel[key] !== false;
+        var who = document.createElement("span"); who.className="who"; who.innerHTML = "Para <b>"+esc(c.nome)+"</b> · "+esc(fmtTel(c.tel));
+        selLine.appendChild(selChk); selLine.appendChild(who);
+        var dup = alreadySentToday(c);
+        if (dup){ var db=document.createElement("span"); db.className="dup-badge"; db.textContent="já enviado hoje "+fmtTime(dup.ts); selLine.appendChild(db); }
+        g.appendChild(selLine);
+        selChk.addEventListener("change", function(){ sendSel[key]=selChk.checked; saveSel(); updateQueueBar(); });
+
+        var chosen = allEvs.filter(function(x){ return apoioInclui(c.id, x); });
+        var pdet = document.createElement("details"); pdet.className="tmpl"; pdet.open = (chosen.length===0);
+        pdet.innerHTML = '<summary>Escolher eventos desta pessoa ('+chosen.length+' de '+allEvs.length+')</summary>';
+        var pcard = document.createElement("div"); pcard.className="card";
+        var prow = document.createElement("div"); prow.className="row"; prow.style.marginBottom="8px";
+        var bAll=document.createElement("button"); bAll.className="btn ghost small"; bAll.textContent="✔ Todas";
+        var bNone=document.createElement("button"); bNone.className="btn ghost small"; bNone.textContent="✖ Nenhuma";
+        bAll.addEventListener("click", (function(cid){ return function(){ allEvs.forEach(function(x){ apoioSel[cid+"||"+x.id]=true; }); saveApoioSel(); renderSendSoft(); }; })(c.id));
+        bNone.addEventListener("click", (function(cid){ return function(){ allEvs.forEach(function(x){ apoioSel[cid+"||"+x.id]=false; }); saveApoioSel(); renderSendSoft(); }; })(c.id));
+        prow.appendChild(bAll); prow.appendChild(bNone); pcard.appendChild(prow);
+        allEvs.forEach(function(x){
+          var lab=document.createElement("label"); lab.className="sel-line";
+          var chk=document.createElement("input"); chk.type="checkbox"; chk.checked=apoioInclui(c.id, x);
+          var sp=document.createElement("span"); sp.className="who"; sp.textContent=(x.quando?x.quando+" · ":"")+(x.ra?x.ra+" · ":"")+x.desc;
+          lab.appendChild(chk); lab.appendChild(sp); pcard.appendChild(lab);
+          chk.addEventListener("change", (function(cid, ev){ return function(){ apoioSel[cid+"||"+ev.id]=this.checked; saveApoioSel(); renderSendSoft(); }; })(c.id, x));
+        });
+        // aplicar a MESMA seleção desta pessoa a todos os outros apoiadores
+        var outros = coords.filter(function(o){ return o.ra===SUP_RA && o.id!==c.id; });
+        if (outros.length){
+          var bApply = document.createElement("button"); bApply.className="btn civic small"; bApply.style.cssText="width:100%;margin-top:10px";
+          bApply.textContent = "📋 Aplicar esta seleção aos outros "+outros.length+" apoiador(es)";
+          bApply.addEventListener("click", (function(cid){ return function(){
+            var os = coords.filter(function(o){ return o.ra===SUP_RA && o.id!==cid; });
+            allEvs.forEach(function(x){
+              var val = apoioSel[cid+"||"+x.id] === true;
+              os.forEach(function(o){ apoioSel[o.id+"||"+x.id] = val; });
+            });
+            saveApoioSel(); renderSendSoft();
+            toast("Seleção aplicada a "+os.length+" apoiador(es)");
+          }; })(c.id));
+          pcard.appendChild(bApply);
+        }
+        pdet.appendChild(pcard); g.appendChild(pdet);
+
+        if (chosen.length){
+          var msg = buildMessage(c.nome, SUP_RA, chosen);
+          var prev=document.createElement("div"); prev.className="msg-prev"; prev.textContent=msg; g.appendChild(prev);
+          var sr=document.createElement("div"); sr.className="send-row";
+          var a=document.createElement("a"); a.className="btn whats"; a.innerHTML=WA_ICON+"<span>Enviar no WhatsApp</span>";
+          a.href="https://wa.me/"+waNumber(c.tel)+"?text="+encodeURIComponent(msg); a.target="_blank"; a.rel="noopener";
+          a.addEventListener("click", (function(coord, items){
+            return function(ev){
+              var d=alreadySentToday(coord);
+              if (d && !confirm("Você já enviou para "+(coord.nome||"esse contato")+" hoje às "+fmtTime(d.ts)+".\nEnviar de novo?")){ ev.preventDefault(); return; }
+              logSend(coord, SUP_RA, items, true);
+              sent[SUP_RA+"||"+coord.id]=true; saveSent();
+              setTimeout(function(){ renderSendSoft(); }, 400);
+            };
+          })(c, chosen));
+          var cp=document.createElement("button"); cp.className="btn ghost"; cp.innerHTML="Copiar"; cp.style.flex="0 0 auto";
+          cp.addEventListener("click", (function(m){ return function(){ copyText(m); }; })(msg));
+          sr.appendChild(a); sr.appendChild(cp); g.appendChild(sr);
+        } else {
+          var hint=document.createElement("p"); hint.className="hint"; hint.style.margin="0"; hint.textContent="Marque acima os eventos que quer enviar para esta pessoa.";
+          g.appendChild(hint);
+        }
+        area.appendChild(g);
+      });
+    }
+
     // Seção "Já enviados" (recolhível, com desfazer)
     if (sentList.length){
       var det = document.createElement("details"); det.className="tmpl";
@@ -1181,6 +1296,14 @@
         if (sent[ra+"||"+c.id]) return;                 // já enviado -> fora da fila
         out.push({ coord: c, ra: ra, evs: evs, msg: buildMessage(c.nome, ra, evs) });
       });
+    });
+    // apoiadores: cada um com seus eventos escolhidos
+    coords.filter(function(c){ return c.ra===SUP_RA; }).forEach(function(c){
+      var key = SUP_RA+"||"+c.id;
+      if (sendSel[key] === false || sent[key]) return;
+      var evs = apoioEvs(c.id);
+      if (!evs.length) return;                          // nada escolhido -> fora da fila
+      out.push({ coord: c, ra: SUP_RA, evs: evs, msg: buildMessage(c.nome, SUP_RA, evs) });
     });
     return out;
   }
@@ -1361,6 +1484,7 @@
     var sendable = Object.keys(byRA).reduce(function(acc,ra){
       return acc + (coords.some(function(c){ return c.ra===ra; }) ? coords.filter(function(c){return c.ra===ra;}).length : 0);
     }, 0);
+    if (events.some(function(e){ return e.on; })) sendable += coords.filter(function(c){ return c.ra===SUP_RA; }).length;
     $("cnt-env").textContent = sendable;
     $("cnt-rel").textContent = logs.length;
   }
